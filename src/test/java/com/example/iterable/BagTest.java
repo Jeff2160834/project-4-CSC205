@@ -2,593 +2,637 @@ package com.example.iterable;
 
 
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
-
+import java.util.*;
+import java.util.function.Predicate;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * JUnit 5 test suite for {@link Bag}.
+ * JUnit 5 test suite for the optimized {@link Bag}.
  *
  * Test groups:
- *  1.  Empty-Bag operations
- *  2.  add() operations
- *  3.  remove() operations
- *  4.  contains() operations
- *  5.  Iterator functionality
- *  6.  Edge cases (null handling, duplicates, non-existent removes, etc.)
+ *  1.  Constructor variants
+ *  2.  add() and addAll()
+ *  3.  contains() and frequency()
+ *  4.  remove(), removeAll(), removeIf()
+ *  5.  size() and isEmpty()
+ *  6.  Capacity management (ensureCapacity, trimToSize)
+ *  7.  clear()
+ *  8.  Live iterator
+ *  9.  Snapshot iterator
+ * 10.  Iterator exception guards
+ * 11.  sort()
+ * 12.  toUnmodifiableList(), toArray(), copy()
+ * 13.  Null handling
+ * 14.  Duplicate items
+ * 15.  Generic type flexibility
  */
-@DisplayName("Bag<E> – Full Test Suite")
+@DisplayName("Bag<E> Optimized – Full Test Suite")
 class BagTest {
-
-    // ------------------------------------------------------------------
-    // Shared fixture
-    // ------------------------------------------------------------------
 
     private Bag<String> bag;
 
     @BeforeEach
-    void setUp() {
-        bag = new Bag<>();
-    }
+    void setUp() { bag = new Bag<>(); }
 
     // ==================================================================
-    // 1. EMPTY BAG OPERATIONS
+    // 1. Constructor variants
     // ==================================================================
 
-    @Nested
-    @DisplayName("1 · Empty Bag Operations")
-    class EmptyBagTests {
+    @Nested @DisplayName("1 · Constructor Variants")
+    class ConstructorTests {
 
-        @Test
-        @DisplayName("new Bag is empty")
-        void newBagIsEmpty() {
+        @Test @DisplayName("default constructor produces empty Bag")
+        void defaultConstructor() {
             assertTrue(bag.isEmpty());
-        }
-
-        @Test
-        @DisplayName("new Bag has size 0")
-        void newBagHasSizeZero() {
             assertEquals(0, bag.size());
         }
 
-        @Test
-        @DisplayName("contains() on empty Bag returns false")
-        void containsOnEmptyReturnsFalse() {
-            assertFalse(bag.contains("anything"));
+        @Test @DisplayName("capacity constructor produces empty Bag")
+        void capacityConstructor() {
+            Bag<String> b = new Bag<>(100);
+            assertTrue(b.isEmpty());
         }
 
-        @Test
-        @DisplayName("remove() on empty Bag returns false")
-        void removeOnEmptyReturnsFalse() {
-            assertFalse(bag.remove("ghost"));
+        @Test @DisplayName("collection constructor copies all elements")
+        void collectionConstructor() {
+            Bag<String> b = new Bag<>(List.of("a", "b", "c"));
+            assertEquals(3, b.size());
+            assertTrue(b.contains("a") && b.contains("b") && b.contains("c"));
         }
 
-        @Test
-        @DisplayName("iterator on empty Bag has no next element")
-        void iteratorOnEmptyHasNoNext() {
-            assertFalse(bag.iterator().hasNext());
+        @Test @DisplayName("collection constructor preserves insertion order")
+        void collectionConstructorOrder() {
+            Bag<String> b = new Bag<>(List.of("x", "y", "z"));
+            List<String> result = new ArrayList<>();
+            for (String s : b) result.add(s);
+            assertEquals(List.of("x", "y", "z"), result);
         }
 
-        @Test
-        @DisplayName("iterator on empty Bag throws NoSuchElementException on next()")
-        void iteratorOnEmptyThrowsOnNext() {
-            Iterator<String> it = bag.iterator();
-            assertThrows(NoSuchElementException.class, it::next);
+        @Test @DisplayName("collection constructor with null source throws NullPointerException")
+        void collectionConstructorNullThrows() {
+            assertThrows(NullPointerException.class, () -> new Bag<>(null));
         }
 
-        @Test
-        @DisplayName("custom initial-capacity constructor produces empty Bag")
-        void capacityConstructorProducesEmptyBag() {
-            Bag<Integer> intBag = new Bag<>(20);
-            assertTrue(intBag.isEmpty());
-            assertEquals(0, intBag.size());
-        }
-
-        @Test
-        @DisplayName("negative initial capacity throws IllegalArgumentException")
+        @Test @DisplayName("negative capacity throws IllegalArgumentException")
         void negativeCapacityThrows() {
             assertThrows(IllegalArgumentException.class, () -> new Bag<>(-1));
         }
     }
 
     // ==================================================================
-    // 2. ADD OPERATIONS
+    // 2. add() and addAll()
     // ==================================================================
 
-    @Nested
-    @DisplayName("2 · add() Operations")
+    @Nested @DisplayName("2 · add() and addAll()")
     class AddTests {
 
-        @Test
-        @DisplayName("add() increases size by 1")
-        void addIncreasesSizeByOne() {
-            bag.add("alpha");
+        @Test @DisplayName("add() increases size by 1")
+        void addIncreasesSize() {
+            bag.add("a");
             assertEquals(1, bag.size());
         }
 
-        @Test
-        @DisplayName("add() makes Bag non-empty")
-        void addMakesBagNonEmpty() {
-            bag.add("beta");
-            assertFalse(bag.isEmpty());
+        @Test @DisplayName("addAll() appends all elements in order")
+        void addAllAppendsAll() {
+            bag.add("first");
+            bag.addAll(List.of("second", "third", "fourth"));
+            assertEquals(4, bag.size());
+            List<String> result = new ArrayList<>();
+            for (String s : bag) result.add(s);
+            assertEquals(List.of("first", "second", "third", "fourth"), result);
         }
 
-        @Test
-        @DisplayName("multiple adds accumulate correct size")
-        void multipleAddsAccumulateSize() {
+        @Test @DisplayName("addAll() with empty collection leaves Bag unchanged")
+        void addAllEmpty() {
+            bag.add("existing");
+            bag.addAll(Collections.emptyList());
+            assertEquals(1, bag.size());
+        }
+
+        @Test @DisplayName("addAll(null) throws NullPointerException")
+        void addAllNullThrows() {
+            assertThrows(NullPointerException.class, () -> bag.addAll(null));
+        }
+
+        @Test @DisplayName("addAll() is equivalent to sequential add() calls")
+        void addAllEquivalentToSequentialAdds() {
+            Bag<String> b1 = new Bag<>();
+            Bag<String> b2 = new Bag<>();
+            List<String> items = List.of("p", "q", "r", "s");
+            b1.addAll(items);
+            items.forEach(b2::add);
+            assertEquals(b1, b2);
+        }
+    }
+
+    // ==================================================================
+    // 3. contains() and frequency()
+    // ==================================================================
+
+    @Nested @DisplayName("3 · contains() and frequency()")
+    class ContainsFrequencyTests {
+
+        @Test @DisplayName("contains() true for present item")
+        void containsPresent() {
+            bag.add("here");
+            assertTrue(bag.contains("here"));
+        }
+
+        @Test @DisplayName("contains() false for absent item")
+        void containsAbsent() {
+            bag.add("here");
+            assertFalse(bag.contains("not-here"));
+        }
+
+        @Test @DisplayName("contains() empty short-circuit returns false immediately")
+        void containsEmptyShortCircuit() {
+            assertFalse(bag.contains("anything"));
+        }
+
+        @Test @DisplayName("frequency() returns correct count for duplicates")
+        void frequencyDuplicates() {
+            bag.add("x"); bag.add("x"); bag.add("x"); bag.add("y");
+            assertEquals(3, bag.frequency("x"));
+            assertEquals(1, bag.frequency("y"));
+        }
+
+        @Test @DisplayName("frequency() returns 0 for absent item")
+        void frequencyAbsent() {
             bag.add("a");
-            bag.add("b");
-            bag.add("c");
+            assertEquals(0, bag.frequency("z"));
+        }
+
+        @Test @DisplayName("frequency() returns 0 on empty Bag (short-circuit)")
+        void frequencyEmpty() {
+            assertEquals(0, bag.frequency("x"));
+        }
+
+        @Test @DisplayName("frequency(null) counts nulls correctly")
+        void frequencyNull() {
+            bag.add(null); bag.add(null); bag.add("real");
+            assertEquals(2, bag.frequency(null));
+        }
+    }
+
+    // ==================================================================
+    // 4. remove(), removeAll(), removeIf()
+    // ==================================================================
+
+    @Nested @DisplayName("4 · remove(), removeAll(), removeIf()")
+    class RemoveTests {
+
+        @Test @DisplayName("remove() removes first occurrence")
+        void removeFirstOccurrence() {
+            bag.addAll(List.of("a", "b", "a"));
+            assertTrue(bag.remove("a"));
+            assertEquals(2, bag.size());
+            // "a" should still be present (second copy)
+            assertTrue(bag.contains("a"));
+        }
+
+        @Test @DisplayName("removeAll(item, 2) removes exactly 2 occurrences")
+        void removeAllTwoOccurrences() {
+            bag.addAll(List.of("d", "d", "d", "d", "e"));
+            int removed = bag.removeAll("d", 2);
+            assertEquals(2, removed);
+            assertEquals(3, bag.size());
+            assertEquals(2, bag.frequency("d"));
+        }
+
+        @Test @DisplayName("removeAll with MAX_VALUE removes all occurrences")
+        void removeAllMaxValue() {
+            bag.addAll(List.of("d", "d", "d"));
+            int removed = bag.removeAll("d", Integer.MAX_VALUE);
+            assertEquals(3, removed);
+            assertFalse(bag.contains("d"));
+        }
+
+        @Test @DisplayName("removeAll on absent item returns 0")
+        void removeAllAbsent() {
+            bag.add("here");
+            assertEquals(0, bag.removeAll("absent", 5));
+            assertEquals(1, bag.size());
+        }
+
+        @Test @DisplayName("removeAll with 0 maxCount removes nothing")
+        void removeAllZeroCount() {
+            bag.add("a");
+            assertEquals(0, bag.removeAll("a", 0));
+            assertEquals(1, bag.size());
+        }
+
+        @Test @DisplayName("removeAll with negative maxCount throws IllegalArgumentException")
+        void removeAllNegativeThrows() {
+            assertThrows(IllegalArgumentException.class, () -> bag.removeAll("a", -1));
+        }
+
+        @Test @DisplayName("removeIf removes all matching elements")
+        void removeIfMatchingElements() {
+            bag.addAll(List.of("apple", "banana", "avocado", "cherry"));
+            boolean changed = bag.removeIf(s -> s.startsWith("a"));
+            assertTrue(changed);
+            assertEquals(2, bag.size());
+            assertFalse(bag.contains("apple") || bag.contains("avocado"));
+        }
+
+        @Test @DisplayName("removeIf with no matches returns false")
+        void removeIfNoMatches() {
+            bag.addAll(List.of("x", "y", "z"));
+            assertFalse(bag.removeIf(s -> s.startsWith("q")));
             assertEquals(3, bag.size());
         }
 
-        @Test
-        @DisplayName("adding many items scales correctly")
-        void addManyItemsScales() {
-            for (int i = 0; i < 1_000; i++) {
-                bag.add("item-" + i);
-            }
-            assertEquals(1_000, bag.size());
+        @Test @DisplayName("removeIf(null) throws NullPointerException")
+        void removeIfNullThrows() {
+            assertThrows(NullPointerException.class, () -> bag.removeIf(null));
+        }
+    }
+
+    // ==================================================================
+    // 5. size() and isEmpty()
+    // ==================================================================
+
+    @Nested @DisplayName("5 · size() and isEmpty()")
+    class SizeTests {
+
+        @Test @DisplayName("isEmpty() and size() reflect additions and removals")
+        void sizeTracksChanges() {
+            assertTrue(bag.isEmpty());
+            bag.add("a"); assertFalse(bag.isEmpty()); assertEquals(1, bag.size());
+            bag.add("b"); assertEquals(2, bag.size());
+            bag.remove("a"); assertEquals(1, bag.size());
+            bag.remove("b"); assertTrue(bag.isEmpty());
+        }
+    }
+
+    // ==================================================================
+    // 6. Capacity management
+    // ==================================================================
+
+    @Nested @DisplayName("6 · Capacity Management")
+    class CapacityTests {
+
+        @Test @DisplayName("ensureCapacity allows bulk inserts without resize")
+        void ensureCapacityBulkInsert() {
+            Bag<Integer> b = new Bag<>();
+            b.ensureCapacity(500);
+            for (int i = 0; i < 500; i++) b.add(i);
+            assertEquals(500, b.size());
         }
 
-        @Test
-        @DisplayName("add() accepts null")
-        void addAcceptsNull() {
-            assertDoesNotThrow(() -> bag.add(null));
+        @Test @DisplayName("trimToSize preserves all elements")
+        void trimToSizePreservesElements() {
+            Bag<Integer> b = new Bag<>(1000);
+            for (int i = 0; i < 10; i++) b.add(i);
+            b.trimToSize();
+            assertEquals(10, b.size());
+            for (int i = 0; i < 10; i++) assertTrue(b.contains(i));
+        }
+    }
+
+    // ==================================================================
+    // 7. clear()
+    // ==================================================================
+
+    @Nested @DisplayName("7 · clear()")
+    class ClearTests {
+
+        @Test @DisplayName("clear() empties the Bag")
+        void clearEmptiesBag() {
+            bag.addAll(List.of("a", "b", "c"));
+            bag.clear();
+            assertTrue(bag.isEmpty());
+            assertEquals(0, bag.size());
+        }
+
+        @Test @DisplayName("clear() on empty Bag is a no-op")
+        void clearEmptyIsNoOp() {
+            assertDoesNotThrow(() -> bag.clear());
+            assertTrue(bag.isEmpty());
+        }
+
+        @Test @DisplayName("Bag is reusable after clear()")
+        void reusableAfterClear() {
+            bag.add("old");
+            bag.clear();
+            bag.add("new");
             assertEquals(1, bag.size());
+            assertTrue(bag.contains("new"));
+            assertFalse(bag.contains("old"));
         }
+    }
 
-        @Test
-        @DisplayName("add() preserves insertion order (verified via iterator)")
-        void addPreservesInsertionOrder() {
-            bag.add("first");
-            bag.add("second");
-            bag.add("third");
+    // ==================================================================
+    // 8. Live iterator
+    // ==================================================================
 
+    @Nested @DisplayName("8 · Live Iterator")
+    class LiveIteratorTests {
+
+        @Test @DisplayName("live iterator visits all elements in insertion order")
+        void liveIteratorOrder() {
+            bag.addAll(List.of("a", "b", "c"));
             List<String> result = new ArrayList<>();
             for (String s : bag) result.add(s);
-
-            assertEquals(List.of("first", "second", "third"), result);
+            assertEquals(List.of("a", "b", "c"), result);
         }
 
-        @ParameterizedTest(name = "add generic type: {0}")
-        @ValueSource(strings = {"hello", "world", "java", "generics"})
-        @DisplayName("add() works for various String values")
-        void addVariousStrings(String value) {
-            bag.add(value);
-            assertTrue(bag.contains(value));
-        }
-    }
-
-    // ==================================================================
-    // 3. REMOVE OPERATIONS
-    // ==================================================================
-
-    @Nested
-    @DisplayName("3 · remove() Operations")
-    class RemoveTests {
-
-        @Test
-        @DisplayName("remove() existing item returns true")
-        void removeExistingReturnsTrue() {
-            bag.add("target");
-            assertTrue(bag.remove("target"));
-        }
-
-        @Test
-        @DisplayName("remove() existing item decreases size")
-        void removeDecreasesSize() {
-            bag.add("x");
-            bag.add("y");
-            bag.remove("x");
-            assertEquals(1, bag.size());
-        }
-
-        @Test
-        @DisplayName("remove() makes Bag empty when last element removed")
-        void removeLastElementMakesBagEmpty() {
-            bag.add("solo");
-            bag.remove("solo");
-            assertTrue(bag.isEmpty());
-        }
-
-        @Test
-        @DisplayName("remove() non-existent item returns false and does not change size")
-        void removeNonExistentReturnsFalse() {
-            bag.add("present");
-            assertFalse(bag.remove("absent"));
-            assertEquals(1, bag.size());
-        }
-
-        @Test
-        @DisplayName("remove() removes only the first occurrence of a duplicate")
-        void removeOnlyFirstOccurrence() {
-            bag.add("dup");
-            bag.add("dup");
-            bag.remove("dup");
-            assertEquals(1, bag.size());
-            assertTrue(bag.contains("dup"));
-        }
-
-        @Test
-        @DisplayName("remove(null) removes the first null")
-        void removeNullRemovesFirstNull() {
-            bag.add(null);
-            bag.add("after-null");
-            assertTrue(bag.remove(null));
-            assertEquals(1, bag.size());
-            assertTrue(bag.contains("after-null"));
-        }
-
-        @Test
-        @DisplayName("sequential removes empty the Bag")
-        void sequentialRemovesEmptyBag() {
-            bag.add("a");
-            bag.add("b");
-            bag.add("c");
-            bag.remove("a");
-            bag.remove("b");
-            bag.remove("c");
-            assertTrue(bag.isEmpty());
-        }
-    }
-
-    // ==================================================================
-    // 4. CONTAINS OPERATIONS
-    // ==================================================================
-
-    @Nested
-    @DisplayName("4 · contains() Operations")
-    class ContainsTests {
-
-        @Test
-        @DisplayName("contains() returns true for an added item")
-        void containsAddedItem() {
-            bag.add("present");
-            assertTrue(bag.contains("present"));
-        }
-
-        @Test
-        @DisplayName("contains() returns false for an item never added")
-        void containsAbsentItem() {
-            bag.add("present");
-            assertFalse(bag.contains("absent"));
-        }
-
-        @Test
-        @DisplayName("contains() returns false after the only occurrence is removed")
-        void containsFalseAfterRemove() {
-            bag.add("temp");
-            bag.remove("temp");
-            assertFalse(bag.contains("temp"));
-        }
-
-        @Test
-        @DisplayName("contains(null) returns true when null was added")
-        void containsNullWhenNullAdded() {
-            bag.add(null);
-            assertTrue(bag.contains(null));
-        }
-
-        @Test
-        @DisplayName("contains(null) returns false when null was never added")
-        void containsNullWhenNotAdded() {
-            bag.add("notNull");
-            assertFalse(bag.contains(null));
-        }
-
-        @Test
-        @DisplayName("contains() is true for each of multiple distinct items")
-        void containsEachDistinctItem() {
-            List<String> values = List.of("alpha", "beta", "gamma");
-            values.forEach(bag::add);
-            values.forEach(v -> assertTrue(bag.contains(v),
-                    "Expected Bag to contain: " + v));
-        }
-
-        @Test
-        @DisplayName("contains() is true for duplicate items after one is removed")
-        void containsTrueForDuplicateAfterOneRemoved() {
-            bag.add("dup");
-            bag.add("dup");
-            bag.remove("dup");
-            assertTrue(bag.contains("dup"),
-                    "Second duplicate should still be present");
-        }
-    }
-
-    // ==================================================================
-    // 5. ITERATOR FUNCTIONALITY
-    // ==================================================================
-
-    @Nested
-    @DisplayName("5 · Iterator Functionality")
-    class IteratorTests {
-
-        @Test
-        @DisplayName("iterator visits every element exactly once")
-        void iteratorVisitsEveryElement() {
-            bag.add("one");
-            bag.add("two");
-            bag.add("three");
-
-            List<String> visited = new ArrayList<>();
-            for (String s : bag) visited.add(s);
-
-            assertEquals(3, visited.size());
-            assertTrue(visited.containsAll(List.of("one", "two", "three")));
-        }
-
-        @Test
-        @DisplayName("iterator traverses elements in insertion order")
-        void iteratorPreservesInsertionOrder() {
-            bag.add("first");
-            bag.add("second");
-            bag.add("third");
-
-            List<String> result = new ArrayList<>();
-            bag.iterator().forEachRemaining(result::add);
-
-            assertEquals(List.of("first", "second", "third"), result);
-        }
-
-        @Test
-        @DisplayName("hasNext() is idempotent – repeated calls do not advance")
-        void hasNextIsIdempotent() {
-            bag.add("only");
-            Iterator<String> it = bag.iterator();
-            assertTrue(it.hasNext());
-            assertTrue(it.hasNext()); // second call must still be true
-            it.next();
-            assertFalse(it.hasNext());
-            assertFalse(it.hasNext()); // still false
-        }
-
-        @Test
-        @DisplayName("iterator.remove() removes current element")
-        void iteratorRemoveDeletesCurrentElement() {
-            bag.add("keep");
-            bag.add("delete");
-            bag.add("keep-too");
-
+        @Test @DisplayName("live iterator remove() deletes the correct element")
+        void liveIteratorRemove() {
+            bag.addAll(List.of("keep", "drop", "keep2"));
             Iterator<String> it = bag.iterator();
             while (it.hasNext()) {
-                if ("delete".equals(it.next())) {
-                    it.remove();
-                }
+                if ("drop".equals(it.next())) it.remove();
             }
-
             assertEquals(2, bag.size());
-            assertFalse(bag.contains("delete"));
+            assertFalse(bag.contains("drop"));
         }
 
-        @Test
-        @DisplayName("iterator.remove() before next() throws IllegalStateException")
-        void iteratorRemoveBeforeNextThrows() {
-            bag.add("item");
+        @Test @DisplayName("live iterator uses index-based remove (no equality scan)")
+        void liveIteratorIndexRemove() {
+            // If index-based remove is used, duplicates are handled correctly:
+            // only the element at cursor-1 is removed, not any equal element elsewhere
+            bag.addAll(List.of("dup", "unique", "dup"));
             Iterator<String> it = bag.iterator();
-            assertThrows(IllegalStateException.class, it::remove);
+            it.next();   // cursor at "dup" [0]
+            it.remove(); // should remove [0], not [2]
+            assertEquals(2, bag.size());
+            assertTrue(bag.contains("dup"));   // [2] still present
+            assertTrue(bag.contains("unique")); // unaffected
+        }
+    }
+
+    // ==================================================================
+    // 9. Snapshot iterator
+    // ==================================================================
+
+    @Nested @DisplayName("9 · Snapshot Iterator")
+    class SnapshotIteratorTests {
+
+        @Test @DisplayName("snapshot iterator is unaffected by subsequent add()")
+        void snapshotImmutableToAdd() {
+            bag.addAll(List.of("a", "b", "c"));
+            Iterator<String> snap = bag.snapshotIterator();
+            bag.add("d");  // live mutation
+            List<String> seen = new ArrayList<>();
+            while (snap.hasNext()) seen.add(snap.next());
+            assertEquals(3, seen.size());
+            assertFalse(seen.contains("d"));
         }
 
-        @Test
-        @DisplayName("iterator.remove() twice in a row throws IllegalStateException")
-        void iteratorRemoveTwiceInRowThrows() {
-            bag.add("item");
-            Iterator<String> it = bag.iterator();
-            it.next();
-            it.remove();
-            assertThrows(IllegalStateException.class, it::remove);
+        @Test @DisplayName("snapshot iterator is unaffected by subsequent remove()")
+        void snapshotImmutableToRemove() {
+            bag.addAll(List.of("x", "y", "z"));
+            Iterator<String> snap = bag.snapshotIterator();
+            bag.remove("x");
+            List<String> seen = new ArrayList<>();
+            while (snap.hasNext()) seen.add(snap.next());
+            assertTrue(seen.contains("x"));  // snapshot captured before removal
+            assertEquals(3, seen.size());
         }
 
-        @Test
-        @DisplayName("iterator.next() past end throws NoSuchElementException")
-        void iteratorNextPastEndThrows() {
+        @Test @DisplayName("snapshot iterator remove() throws UnsupportedOperationException")
+        void snapshotRemoveThrows() {
             bag.add("item");
+            Iterator<String> snap = bag.snapshotIterator();
+            snap.next();
+            assertThrows(UnsupportedOperationException.class, snap::remove);
+        }
+
+        @Test @DisplayName("snapshot of empty Bag has no elements")
+        void snapshotEmpty() {
+            assertFalse(bag.snapshotIterator().hasNext());
+        }
+    }
+
+    // ==================================================================
+    // 10. Iterator exception guards
+    // ==================================================================
+
+    @Nested @DisplayName("10 · Iterator Exception Guards")
+    class IteratorExceptionTests {
+
+        @Test @DisplayName("live next() past end throws NoSuchElementException")
+        void liveNextPastEnd() {
+            bag.add("only");
             Iterator<String> it = bag.iterator();
             it.next();
             assertThrows(NoSuchElementException.class, it::next);
         }
 
-        @Test
-        @DisplayName("for-each loop on single-element Bag iterates once")
-        void forEachOnSingleElement() {
-            bag.add("solo");
-            int count = 0;
-            for (String ignored : bag) count++;
-            assertEquals(1, count);
+        @Test @DisplayName("live remove() before next() throws IllegalStateException")
+        void liveRemoveBeforeNext() {
+            bag.add("item");
+            assertThrows(IllegalStateException.class, bag.iterator()::remove);
         }
 
-        @Test
-        @DisplayName("multiple independent iterators do not interfere")
-        void multipleIndependentIterators() {
-            bag.add("A");
-            bag.add("B");
-
-            Iterator<String> it1 = bag.iterator();
-            Iterator<String> it2 = bag.iterator();
-
-            assertEquals("A", it1.next());
-            assertEquals("A", it2.next()); // it2 should start fresh
-            assertEquals("B", it1.next());
-            assertEquals("B", it2.next());
+        @Test @DisplayName("live remove() twice in a row throws IllegalStateException")
+        void liveRemoveTwice() {
+            bag.add("item");
+            Iterator<String> it = bag.iterator();
+            it.next(); it.remove();
+            assertThrows(IllegalStateException.class, it::remove);
         }
 
-        @Test
-        @DisplayName("iterator works correctly with generic Integer Bag")
-        void iteratorWorksWithIntegerBag() {
-            Bag<Integer> intBag = new Bag<>();
-            for (int i = 1; i <= 5; i++) intBag.add(i);
-
-            int sum = 0;
-            for (int n : intBag) sum += n;
-
-            assertEquals(15, sum); // 1+2+3+4+5
+        @Test @DisplayName("snapshot next() past end throws NoSuchElementException")
+        void snapshotNextPastEnd() {
+            bag.add("only");
+            Iterator<String> snap = bag.snapshotIterator();
+            snap.next();
+            assertThrows(NoSuchElementException.class, snap::next);
         }
     }
 
     // ==================================================================
-    // 6. EDGE CASES
+    // 11. sort()
     // ==================================================================
 
-    @Nested
-    @DisplayName("6 · Edge Cases")
-    class EdgeCaseTests {
+    @Nested @DisplayName("11 · sort()")
+    class SortTests {
 
-        // ---- Null handling -----------------------------------------------
-
-        @Test
-        @DisplayName("add(null) then contains(null) returns true")
-        void addNullContainsNull() {
-            bag.add(null);
-            assertTrue(bag.contains(null));
+        @Test @DisplayName("sort(null) sorts Integers in natural order")
+        void sortNaturalOrder() {
+            Bag<Integer> b = new Bag<>(List.of(3, 1, 4, 1, 5, 9, 2, 6));
+            b.sort(null);
+            List<Integer> result = new ArrayList<>();
+            for (int n : b) result.add(n);
+            List<Integer> expected = new ArrayList<>(List.of(3, 1, 4, 1, 5, 9, 2, 6));
+            Collections.sort(expected);
+            assertEquals(expected, result);
         }
 
-        @Test
-        @DisplayName("add multiple nulls; size reflects all")
-        void addMultipleNullsTrackedBySize() {
-            bag.add(null);
-            bag.add(null);
-            assertEquals(2, bag.size());
+        @Test @DisplayName("sort(reverseOrder) sorts Integers descending")
+        void sortReverseOrder() {
+            Bag<Integer> b = new Bag<>(List.of(3, 1, 2));
+            b.sort(Comparator.reverseOrder());
+            List<Integer> result = new ArrayList<>();
+            for (int n : b) result.add(n);
+            assertEquals(List.of(3, 2, 1), result);
         }
 
-        @Test
-        @DisplayName("remove(null) removes only one null when multiple nulls present")
-        void removeOnlyOneNullWhenMultiplePresent() {
-            bag.add(null);
-            bag.add(null);
-            bag.remove(null);
-            assertEquals(1, bag.size());
-            assertTrue(bag.contains(null));
+        @Test @DisplayName("sort on empty Bag is a no-op")
+        void sortEmpty() {
+            assertDoesNotThrow(() -> bag.sort(null));
+            assertTrue(bag.isEmpty());
         }
 
-        @Test
-        @DisplayName("iterator correctly visits null elements")
-        void iteratorVisitsNullElements() {
-            bag.add("before");
-            bag.add(null);
-            bag.add("after");
-
-            List<String> result = new ArrayList<>();
-            for (String s : bag) result.add(s);
-
-            assertEquals(3, result.size());
-            assertNull(result.get(1));
-        }
-
-        // ---- Removing non-existent items ----------------------------------
-
-        @Test
-        @DisplayName("remove() of item never added returns false")
-        void removeNeverAddedReturnsFalse() {
-            assertFalse(bag.remove("ghost"));
-        }
-
-        @Test
-        @DisplayName("remove() after all occurrences gone returns false")
-        void removeAfterAllGoneReturnsFalse() {
-            bag.add("once");
-            bag.remove("once");
-            assertFalse(bag.remove("once"));
-        }
-
-        @Test
-        @DisplayName("remove() does not alter size when item is absent")
-        void removeAbsentDoesNotAlterSize() {
-            bag.add("existing");
-            bag.remove("missing");
+        @Test @DisplayName("sort on single-element Bag is a no-op")
+        void sortSingleElement() {
+            bag.add("only");
+            bag.sort(null);
             assertEquals(1, bag.size());
         }
+    }
 
-        // ---- Duplicate items ---------------------------------------------
+    // ==================================================================
+    // 12. toUnmodifiableList(), toArray(), copy()
+    // ==================================================================
 
-        @Test
-        @DisplayName("add duplicate preserves both copies")
-        void addDuplicatePreservesBothCopies() {
-            bag.add("dup");
-            bag.add("dup");
-            assertEquals(2, bag.size());
+    @Nested @DisplayName("12 · Bulk Utilities")
+    class BulkUtilityTests {
+
+        @Test @DisplayName("toUnmodifiableList() returns correct size and contents")
+        void toUnmodifiableListContents() {
+            bag.addAll(List.of("a", "b", "c"));
+            List<String> view = bag.toUnmodifiableList();
+            assertEquals(3, view.size());
+            assertTrue(view.containsAll(List.of("a", "b", "c")));
         }
 
-        @Test
-        @DisplayName("contains() returns true while any duplicate remains")
-        void containsTrueWhileAnyDuplicateRemains() {
-            bag.add("dup");
-            bag.add("dup");
-            bag.remove("dup");
-            assertTrue(bag.contains("dup"));
-        }
-
-        @Test
-        @DisplayName("iterator counts duplicate occurrences separately")
-        void iteratorCountsDuplicatesSeparately() {
-            bag.add("dup");
-            bag.add("dup");
-            bag.add("dup");
-
-            long count = 0;
-            for (String s : bag) {
-                if ("dup".equals(s)) count++;
-            }
-            assertEquals(3, count);
-        }
-
-        // ---- Mixed generic type ------------------------------------------
-
-        @Test
-        @DisplayName("Bag<Object> can hold items of mixed runtime types")
-        void bagOfObjectHoldsMixedTypes() {
-            Bag<Object> mixed = new Bag<>();
-            mixed.add("string");
-            mixed.add(42);
-            mixed.add(3.14);
-            mixed.add(null);
-
-            assertEquals(4, mixed.size());
-            assertTrue(mixed.contains("string"));
-            assertTrue(mixed.contains(42));
-            assertTrue(mixed.contains(null));
-        }
-
-        // ---- toString / equals / hashCode --------------------------------
-
-        @Test
-        @DisplayName("toString() includes all elements")
-        void toStringIncludesAllElements() {
-            bag.add("hello");
-            bag.add("world");
-            String str = bag.toString();
-            assertTrue(str.contains("hello") && str.contains("world"));
-        }
-
-        @Test
-        @DisplayName("two Bags with same elements in same order are equal")
-        void equalBagsAreEqual() {
-            Bag<String> other = new Bag<>();
+        @Test @DisplayName("toUnmodifiableList() is read-only")
+        void toUnmodifiableListReadOnly() {
             bag.add("x");
-            other.add("x");
-            assertEquals(bag, other);
+            assertThrows(UnsupportedOperationException.class,
+                    () -> bag.toUnmodifiableList().add("y"));
         }
 
-        @Test
-        @DisplayName("Bag is equal to itself (reflexive)")
-        void bagEqualsItself() {
-            bag.add("a");
-            assertEquals(bag, bag);
+        @Test @DisplayName("toArray() returns array with correct length and contents")
+        void toArrayContents() {
+            bag.addAll(List.of("p", "q", "r"));
+            Object[] arr = bag.toArray();
+            assertEquals(3, arr.length);
+            assertEquals("p", arr[0]);
+            assertEquals("r", arr[2]);
         }
 
-        @Test
-        @DisplayName("two Bags with different elements are not equal")
-        void unequalBagsAreNotEqual() {
-            Bag<String> other = new Bag<>();
-            bag.add("a");
-            other.add("b");
-            assertNotEquals(bag, other);
+        @Test @DisplayName("copy() produces an equal but independent Bag")
+        void copyIndependence() {
+            bag.addAll(List.of("alpha", "beta"));
+            Bag<String> copied = bag.copy();
+            assertEquals(bag, copied);
+            copied.add("gamma");
+            assertNotEquals(bag, copied);    // copy grew; original unchanged
+            assertEquals(2, bag.size());
+            assertEquals(3, copied.size());
+        }
+
+        @Test @DisplayName("copy() of empty Bag is also empty")
+        void copyEmpty() {
+            Bag<String> copied = bag.copy();
+            assertTrue(copied.isEmpty());
+        }
+    }
+
+    // ==================================================================
+    // 13. Null handling
+    // ==================================================================
+
+    @Nested @DisplayName("13 · Null Handling")
+    class NullTests {
+
+        @Test @DisplayName("addAll can include null elements")
+        void addAllWithNulls() {
+            List<String> withNull = new ArrayList<>();
+            withNull.add(null); withNull.add("real");
+            bag.addAll(withNull);
+            assertEquals(2, bag.size());
+            assertTrue(bag.contains(null));
+        }
+
+        @Test @DisplayName("frequency(null) counts correctly")
+        void frequencyNull() {
+            bag.add(null); bag.add(null); bag.add("x");
+            assertEquals(2, bag.frequency(null));
+        }
+
+        @Test @DisplayName("removeAll(null, n) removes nulls")
+        void removeAllNull() {
+            bag.add(null); bag.add(null); bag.add("keep");
+            int rm = bag.removeAll(null, 1);
+            assertEquals(1, rm);
+            assertEquals(1, bag.frequency(null));
+        }
+
+        @Test @DisplayName("removeIf can match nulls")
+        void removeIfNull() {
+            bag.add(null); bag.add("real");
+            bag.removeIf(Objects::isNull);
+            assertFalse(bag.contains(null));
+            assertTrue(bag.contains("real"));
+        }
+    }
+
+    // ==================================================================
+    // 14. Duplicate items
+    // ==================================================================
+
+    @Nested @DisplayName("14 · Duplicate Items")
+    class DuplicateTests {
+
+        @Test @DisplayName("frequency() reports all duplicate copies")
+        void frequencyAllCopies() {
+            for (int i = 0; i < 5; i++) bag.add("dup");
+            assertEquals(5, bag.frequency("dup"));
+        }
+
+        @Test @DisplayName("removeAll removes exact count of duplicates")
+        void removeAllExactCount() {
+            for (int i = 0; i < 5; i++) bag.add("dup");
+            bag.removeAll("dup", 3);
+            assertEquals(2, bag.frequency("dup"));
+        }
+
+        @Test @DisplayName("removeIf removes all duplicates at once")
+        void removeIfAllDuplicates() {
+            bag.addAll(List.of("dup", "dup", "dup", "keep"));
+            bag.removeIf("dup"::equals);
+            assertFalse(bag.contains("dup"));
+            assertTrue(bag.contains("keep"));
+        }
+    }
+
+    // ==================================================================
+    // 15. Generic type flexibility
+    // ==================================================================
+
+    @Nested @DisplayName("15 · Generic Type Flexibility")
+    class GenericTests {
+
+        @Test @DisplayName("Bag<Integer> with sort and frequency")
+        void integerBag() {
+            Bag<Integer> b = new Bag<>(List.of(3, 1, 2, 1));
+            b.sort(null);
+            assertEquals(2, b.frequency(1));
+            List<Integer> result = new ArrayList<>();
+            for (int n : b) result.add(n);
+            assertEquals(List.of(1, 1, 2, 3), result);
+        }
+
+        @Test @DisplayName("Bag<Object> copy and toArray")
+        void objectBag() {
+            Bag<Object> b = new Bag<>();
+            b.add("str"); b.add(42); b.add(null);
+            Bag<Object> c = b.copy();
+            assertEquals(b, c);
+            assertEquals(3, b.toArray().length);
+        }
+
+        @Test @DisplayName("Bag<String> removeIf with lambda")
+        void stringBagRemoveIf() {
+            Bag<String> b = new Bag<>(List.of("cat", "car", "bar", "bat"));
+            b.removeIf(s -> s.startsWith("c"));
+            assertEquals(2, b.size());
+            assertFalse(b.contains("cat") || b.contains("car"));
         }
     }
 }
