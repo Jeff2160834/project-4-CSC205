@@ -42,9 +42,7 @@ Manual Modifications:
 AI Tool Used: [Co-Pilot, GPT-5 mini]
 Generation Date: [2-18-26]
 Original Prompt:
-"["Create a Java abstract class called Shape3D that implements a ThreeDimensionalShape interface. The class should have private fields name (String) and color (String) with public getters and setters. Include input validation that throws IllegalArgumentException for null or empty values. Add a constructor that accepts both fields.
-Provide concrete implementations of getVolume() and getSurfaceArea() that simply call their respective abstract methods. Override toString()
-to return a formatted string showing the shape's name, color, volume, and surface area rounded to 2 decimal places. Include full JavaDoc documentation on all methods and the class itself."]"
+"[""]"
 Follow-up Prompts (if any):
 
     "[N/A]"
@@ -62,9 +60,7 @@ Manual Modifications:
 AI Tool Used: [Co-Pilot, GPT-5 mini]
 Generation Date: [2-18-26]
 Original Prompt:
-"["Create a Java abstract class called Shape3D that implements a ThreeDimensionalShape interface. The class should have private fields name (String) and color (String) with public getters and setters. Include input validation that throws IllegalArgumentException for null or empty values. Add a constructor that accepts both fields.
-Provide concrete implementations of getVolume() and getSurfaceArea() that simply call their respective abstract methods. Override toString()
-to return a formatted string showing the shape's name, color, volume, and surface area rounded to 2 decimal places. Include full JavaDoc documentation on all methods and the class itself."]"
+"[""]"
 Follow-up Prompts (if any):
 
     "[N/A]"
@@ -82,9 +78,7 @@ Manual Modifications:
 AI Tool Used: [Co-Pilot, GPT-5 mini]
 Generation Date: [2-18-26]
 Original Prompt:
-"["Create a Java abstract class called Shape3D that implements a ThreeDimensionalShape interface. The class should have private fields name (String) and color (String) with public getters and setters. Include input validation that throws IllegalArgumentException for null or empty values. Add a constructor that accepts both fields.
-Provide concrete implementations of getVolume() and getSurfaceArea() that simply call their respective abstract methods. Override toString()
-to return a formatted string showing the shape's name, color, volume, and surface area rounded to 2 decimal places. Include full JavaDoc documentation on all methods and the class itself."]"
+"[""]"
 Follow-up Prompts (if any):
 
     "[N/A]"
@@ -102,9 +96,7 @@ Manual Modifications:
 AI Tool Used: [Co-Pilot, GPT-5 mini]
 Generation Date: [2-18-26]
 Original Prompt:
-"["Create a Java abstract class called Shape3D that implements a ThreeDimensionalShape interface. The class should have private fields name (String) and color (String) with public getters and setters. Include input validation that throws IllegalArgumentException for null or empty values. Add a constructor that accepts both fields.
-Provide concrete implementations of getVolume() and getSurfaceArea() that simply call their respective abstract methods. Override toString()
-to return a formatted string showing the shape's name, color, volume, and surface area rounded to 2 decimal places. Include full JavaDoc documentation on all methods and the class itself."]"
+"[""]"
 Follow-up Prompts (if any):
 
     "[N/A]"
@@ -122,9 +114,7 @@ Manual Modifications:
 AI Tool Used: [Co-Pilot, GPT-5 mini]
 Generation Date: [2-18-26]
 Original Prompt:
-"["Create a Java abstract class called Shape3D that implements a ThreeDimensionalShape interface. The class should have private fields name (String) and color (String) with public getters and setters. Include input validation that throws IllegalArgumentException for null or empty values. Add a constructor that accepts both fields.
-Provide concrete implementations of getVolume() and getSurfaceArea() that simply call their respective abstract methods. Override toString()
-to return a formatted string showing the shape's name, color, volume, and surface area rounded to 2 decimal places. Include full JavaDoc documentation on all methods and the class itself."]"
+"[""]"
 Follow-up Prompts (if any):
 
     "[N/A]"
@@ -142,9 +132,7 @@ Manual Modifications:
 AI Tool Used: [Co-Pilot, GPT-5 mini]
 Generation Date: [2-18-26]
 Original Prompt:
-"["Create a Java abstract class called Shape3D that implements a ThreeDimensionalShape interface. The class should have private fields name (String) and color (String) with public getters and setters. Include input validation that throws IllegalArgumentException for null or empty values. Add a constructor that accepts both fields.
-Provide concrete implementations of getVolume() and getSurfaceArea() that simply call their respective abstract methods. Override toString()
-to return a formatted string showing the shape's name, color, volume, and surface area rounded to 2 decimal places. Include full JavaDoc documentation on all methods and the class itself."]"
+"[""]"
 Follow-up Prompts (if any):
 
     "[N/A]"

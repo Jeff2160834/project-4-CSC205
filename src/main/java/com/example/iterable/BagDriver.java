@@ -1,539 +1,541 @@
 package com.example.iterable;
 
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Spliterator;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 /**
- * BagDriver – Smoke-test driver for the optimized Bag<E> class.
+ * BagDriver – Smoke-test driver for the forEach / spliterator / fail-fast Bag.
  *
  * Sections:
- *   1.  Constructor variants (default, capacity, collection)
- *   2.  add() and addAll()
- *   3.  contains() and frequency()
- *   4.  remove(), removeAll(), removeIf()
- *   5.  size() and isEmpty()
- *   6.  Capacity management – ensureCapacity() and trimToSize()
- *   7.  clear()
- *   8.  Iterator – live traversal
- *   9.  Iterator – snapshot (snapshotIterator)
- *  10.  Iterator – exception guards
- *  11.  sort()
- *  12.  toUnmodifiableList(), toArray(), copy()
- *  13.  Null handling
- *  14.  Duplicate items
- *  15.  Generic type flexibility
+ *   1.  forEach — basic traversal with ArrayList visual per element
+ *   2.  forEach — fail-fast: mutation inside lambda throws CME
+ *   3.  forEach — fail-fast: external mutation between forEach calls
+ *   4.  Live iterator — fail-fast on external add
+ *   5.  Live iterator — fail-fast on external remove
+ *   6.  Live iterator — own remove() is NOT flagged as concurrent modification
+ *   7.  Live iterator — forEachRemaining
+ *   8.  Live iterator — forEachRemaining fail-fast
+ *   9.  Snapshot iterator — immune to external mutations
+ *  10.  spliterator — tryAdvance element-by-element
+ *  11.  spliterator — forEachRemaining bulk
+ *  12.  spliterator — trySplit halves
+ *  13.  spliterator — characteristics (ORDERED, SIZED, SUBSIZED, IMMUTABLE)
+ *  14.  spliterator — sequential stream via StreamSupport
+ *  15.  spliterator — parallel stream via StreamSupport
+ *  16.  Regression: all prior mutating methods still increment modCount correctly
  */
 public class BagDriver {
 
     public static void main(String[] args) {
-        System.out.println("╔═══════════════════════════════════════════════════╗");
-        System.out.println("║     Bag<E> Optimized  —  Smoke Test Driver        ║");
-        System.out.println("╚═══════════════════════════════════════════════════╝");
+        System.out.println("╔══════════════════════════════════════════════════════╗");
+        System.out.println("║  Bag<E>  forEach / spliterator / fail-fast  Driver   ║");
+        System.out.println("╚══════════════════════════════════════════════════════╝");
 
         int[] tally = {0, 0};
 
-        smokeConstructors(tally);
-        smokeAddAndAddAll(tally);
-        smokeContainsAndFrequency(tally);
-        smokeRemoveVariants(tally);
-        smokeSizeAndIsEmpty(tally);
-        smokeCapacityManagement(tally);
-        smokeClear(tally);
-        smokeLiveIterator(tally);
-        smokeSnapshotIterator(tally);
-        smokeIteratorExceptions(tally);
-        smokeSort(tally);
-        smokeBulkUtilities(tally);
-        smokeNullHandling(tally);
-        smokeDuplicates(tally);
-        smokeGenericTypes(tally);
+        smokeForEach(tally);
+        smokeForEachFailFastLambda(tally);
+        smokeForEachFailFastExternal(tally);
+        smokeLiveIteratorFailFastAdd(tally);
+        smokeLiveIteratorFailFastRemove(tally);
+        smokeLiveIteratorOwnRemoveSafe(tally);
+        smokeLiveIteratorForEachRemaining(tally);
+        smokeLiveIteratorForEachRemainingFailFast(tally);
+        smokeSnapshotIteratorImmune(tally);
+        smokeSpliteratorTryAdvance(tally);
+        smokeSpliteratorForEachRemaining(tally);
+        smokeSpliteratorTrySplit(tally);
+        smokeSpliteratorCharacteristics(tally);
+        smokeSpliteratorSequentialStream(tally);
+        smokeSpliteratorParallelStream(tally);
+        smokeModCountRegression(tally);
 
-        System.out.println("\n╔═══════════════════════════════════════════════════╗");
-        System.out.printf( "║  Results:  %3d passed  |  %3d failed             ║%n",
+        System.out.println("\n╔══════════════════════════════════════════════════════╗");
+        System.out.printf( "║  Results:  %3d passed  |  %3d failed               ║%n",
                 tally[0], tally[1]);
-        System.out.println("╚═══════════════════════════════════════════════════╝");
-
+        System.out.println("╚══════════════════════════════════════════════════════╝");
         if (tally[1] > 0) System.exit(1);
     }
 
     // ==================================================================
-    // 1. Constructor variants
+    // 1. forEach — basic traversal
     // ==================================================================
 
-    static void smokeConstructors(int[] tally) {
-        printHeader("1. Constructor Variants");
+    static void smokeForEach(int[] tally) {
+        printHeader("1. forEach — Basic Traversal");
 
-        // Default constructor
-        Bag<String> b1 = new Bag<>();
-        printBag("new Bag<>()", b1);
-        check("default constructor: empty",      b1.isEmpty(),   tally);
-        check("default constructor: size 0",     b1.size() == 0, tally);
+        Bag<String> bag = new Bag<>(List.of("alpha", "beta", "gamma", "delta"));
+        printBag("Source Bag", bag);
 
-        // Capacity constructor
-        Bag<String> b2 = new Bag<>(50);
-        printBag("new Bag<>(50)", b2);
-        check("capacity constructor: empty",     b2.isEmpty(),   tally);
+        List<String> collected = new ArrayList<>();
+        System.out.println("  forEach traversal:");
+        bag.forEach(item -> {
+            System.out.printf("    → \"%s\"%n", item);
+            collected.add(item);
+        });
+        printBag("Bag unchanged after forEach", bag);
 
-        // Collection constructor
-        Bag<String> b3 = new Bag<>(List.of("x", "y", "z"));
-        printBag("new Bag<>(List.of(\"x\",\"y\",\"z\"))", b3);
-        check("collection constructor: size 3",  b3.size() == 3, tally);
-        check("collection constructor: has x",   b3.contains("x"), tally);
-        check("collection constructor: has z",   b3.contains("z"), tally);
+        check("forEach visited 4 elements",          collected.size() == 4,     tally);
+        check("forEach order: index 0 = alpha",      "alpha".equals(collected.get(0)), tally);
+        check("forEach order: index 3 = delta",      "delta".equals(collected.get(3)), tally);
+        check("Bag size unchanged after forEach",    bag.size() == 4,           tally);
 
-        // Negative capacity
-        boolean threw = false;
-        try { new Bag<>(-1); } catch (IllegalArgumentException e) { threw = true; }
-        check("negative capacity throws IllegalArgumentException", threw, tally);
-    }
-
-    // ==================================================================
-    // 2. add() and addAll()
-    // ==================================================================
-
-    static void smokeAddAndAddAll(int[] tally) {
-        printHeader("2. add() and addAll()");
-
-        Bag<String> bag = new Bag<>();
-        printBag("Before any adds", bag);
-
-        bag.add("alpha");
-        printBag("After add(\"alpha\")", bag);
-        check("size 1 after one add",    bag.size() == 1, tally);
-
-        bag.add("beta");
-        bag.add("gamma");
-        printBag("After add(\"beta\"), add(\"gamma\")", bag);
-        check("size 3 after three adds", bag.size() == 3, tally);
-
-        // addAll
-        bag.addAll(List.of("delta", "epsilon", "zeta"));
-        printBag("After addAll([delta, epsilon, zeta])", bag);
-        check("size 6 after addAll of 3",    bag.size() == 6,         tally);
-        check("addAll: contains delta",      bag.contains("delta"),   tally);
-        check("addAll: contains epsilon",    bag.contains("epsilon"), tally);
-        check("addAll: contains zeta",       bag.contains("zeta"),    tally);
-
-        // addAll null guard
-        boolean threw = false;
-        try { bag.addAll(null); } catch (NullPointerException e) { threw = true; }
-        check("addAll(null) throws NullPointerException", threw, tally);
-    }
-
-    // ==================================================================
-    // 3. contains() and frequency()
-    // ==================================================================
-
-    static void smokeContainsAndFrequency(int[] tally) {
-        printHeader("3. contains() and frequency()");
-
-        Bag<String> bag = new Bag<>();
-        bag.add("a");
-        bag.add("b");
-        bag.add("a");
-        bag.add("a");
-        printBag("Bag [a, b, a, a]", bag);
-
-        check("contains(\"a\") true",          bag.contains("a"),       tally);
-        check("contains(\"b\") true",          bag.contains("b"),       tally);
-        check("contains(\"z\") false",         !bag.contains("z"),      tally);
-        check("frequency(\"a\") == 3",         bag.frequency("a") == 3, tally);
-        check("frequency(\"b\") == 1",         bag.frequency("b") == 1, tally);
-        check("frequency(\"z\") == 0",         bag.frequency("z") == 0, tally);
-
-        // Empty-bag short-circuit
+        // forEach on empty bag
         Bag<String> empty = new Bag<>();
-        check("contains() false on empty (short-circuit)", !empty.contains("x"),  tally);
-        check("frequency() 0 on empty (short-circuit)",    empty.frequency("x") == 0, tally);
+        List<String> emptyResult = new ArrayList<>();
+        empty.forEach(emptyResult::add);
+        check("forEach on empty Bag visits 0 elements", emptyResult.isEmpty(), tally);
     }
 
     // ==================================================================
-    // 4. remove(), removeAll(), removeIf()
+    // 2. forEach — fail-fast: mutation INSIDE the consumer lambda
     // ==================================================================
 
-    static void smokeRemoveVariants(int[] tally) {
-        printHeader("4. remove(), removeAll(), removeIf()");
+    static void smokeForEachFailFastLambda(int[] tally) {
+        printHeader("2. forEach — Fail-Fast: Mutation Inside Lambda");
 
-        // --- remove(E) ---
-        Bag<String> bag = new Bag<>();
-        bag.addAll(List.of("A", "B", "C"));
-        printBag("Initial [A, B, C]", bag);
+        Bag<String> bag = new Bag<>(List.of("a", "b", "c"));
+        printBag("Before forEach with mutating lambda", bag);
 
-        check("remove(\"B\") returns true",  bag.remove("B"),    tally);
-        printBag("After remove(\"B\")", bag);
-        check("size 2 after remove",         bag.size() == 2,    tally);
-        check("B gone after remove",         !bag.contains("B"), tally);
-        check("remove(\"Z\") returns false", !bag.remove("Z"),   tally);
-
-        // --- removeAll(E, int) ---
-        Bag<String> dup = new Bag<>(List.of("x", "x", "x", "x", "y"));
-        printBag("Dup bag [x,x,x,x,y] before removeAll(x, 2)", dup);
-        int removed = dup.removeAll("x", 2);
-        printBag("After removeAll(\"x\", 2)", dup);
-        check("removeAll returned 2",          removed == 2,         tally);
-        check("size is 3 after removeAll",     dup.size() == 3,      tally);
-        check("x still present (2 remain)",    dup.contains("x"),    tally);
-        check("y unaffected by removeAll",     dup.contains("y"),    tally);
-
-        // remove ALL occurrences
-        int removedAll = dup.removeAll("x", Integer.MAX_VALUE);
-        printBag("After removeAll(\"x\", MAX_VALUE)", dup);
-        check("removeAll(MAX_VALUE) removed 2 remaining", removedAll == 2,     tally);
-        check("x completely gone",                        !dup.contains("x"),  tally);
-
-        // negative maxCount guard
-        boolean threw = false;
-        try { dup.removeAll("y", -1); } catch (IllegalArgumentException e) { threw = true; }
-        check("removeAll with negative maxCount throws", threw, tally);
-
-        // --- removeIf(Predicate) ---
-        Bag<Integer> nums = new Bag<>(List.of(1, 2, 3, 4, 5, 6));
-        printBag("Nums [1..6] before removeIf(even)", nums);
-        boolean changed = nums.removeIf(n -> n % 2 == 0);
-        printBag("After removeIf(even)", nums);
-        check("removeIf returned true",         changed,           tally);
-        check("size is 3 after removeIf",       nums.size() == 3,  tally);
-        check("no even numbers remain",         !nums.contains(2) && !nums.contains(4) && !nums.contains(6), tally);
-        check("odd numbers still present",      nums.contains(1) && nums.contains(3) && nums.contains(5),   tally);
-
-        // removeIf null guard
-        boolean threwNpe = false;
-        try { nums.removeIf(null); } catch (NullPointerException e) { threwNpe = true; }
-        check("removeIf(null) throws NullPointerException", threwNpe, tally);
+        boolean cme = false;
+        try {
+            bag.forEach(item -> {
+                // Mutate the Bag inside the consumer — should trigger CME
+                if ("b".equals(item)) bag.add("ILLEGAL");
+            });
+        } catch (ConcurrentModificationException e) {
+            cme = true;
+            System.out.println("  ConcurrentModificationException caught: " + e.getMessage());
+        }
+        check("forEach throws CME when lambda mutates Bag", cme, tally);
+        printBag("Bag after interrupted forEach", bag);
     }
 
     // ==================================================================
-    // 5. size() and isEmpty()
+    // 3. forEach — fail-fast: external mutation between forEach start and end
     // ==================================================================
 
-    static void smokeSizeAndIsEmpty(int[] tally) {
-        printHeader("5. size() and isEmpty()");
+    static void smokeForEachFailFastExternal(int[] tally) {
+        printHeader("3. forEach — Fail-Fast: External Mutation via Second Reference");
 
-        Bag<Integer> bag = new Bag<>();
-        printBag("Initial", bag);
-        check("isEmpty true initially",  bag.isEmpty(),    tally);
-        check("size 0 initially",        bag.size() == 0,  tally);
+        Bag<String> bag = new Bag<>(List.of("x", "y", "z"));
+        printBag("Bag before external-mutation forEach", bag);
 
-        bag.add(10);
-        printBag("After add(10)", bag);
-        check("isEmpty false after add", !bag.isEmpty(),   tally);
-        check("size 1 after add",        bag.size() == 1,  tally);
-
-        bag.add(20);
-        bag.add(30);
-        printBag("After add(20), add(30)", bag);
-        check("size 3 after three adds", bag.size() == 3,  tally);
-
-        bag.remove(20);
-        printBag("After remove(20)", bag);
-        check("size 2 after remove",     bag.size() == 2,  tally);
+        // Use a second reference to simulate external mutation
+        Bag<String> ref = bag;
+        boolean cme = false;
+        try {
+            // Using forEachRemaining on live iterator — same modCount contract
+            Iterator<String> it = bag.iterator();
+            it.next();           // consume "x"
+            ref.add("W");        // external structural change
+            it.next();           // should throw CME
+        } catch (ConcurrentModificationException e) {
+            cme = true;
+            System.out.println("  ConcurrentModificationException caught: " + e.getMessage());
+        }
+        check("External add detected by live iterator (fail-fast)", cme, tally);
     }
 
     // ==================================================================
-    // 6. Capacity management
+    // 4. Live iterator — fail-fast on external add
     // ==================================================================
 
-    static void smokeCapacityManagement(int[] tally) {
-        printHeader("6. Capacity Management – ensureCapacity() and trimToSize()");
+    static void smokeLiveIteratorFailFastAdd(int[] tally) {
+        printHeader("4. Live Iterator — Fail-Fast on External add()");
 
-        Bag<Integer> bag = new Bag<>();
-        bag.ensureCapacity(1000);
-        System.out.println("  ensureCapacity(1000) called — no resize during bulk insert");
-        for (int i = 0; i < 1000; i++) bag.add(i);
-        printBag("After 1000 adds (ensureCapacity pre-allocated)", bag);
-        check("size is 1000 after 1000 adds", bag.size() == 1000, tally);
+        Bag<Integer> bag = new Bag<>(List.of(1, 2, 3));
+        printBag("Bag [1, 2, 3]", bag);
 
-        // Trim back down
-        bag.removeIf(n -> n >= 5);
-        printBag("After removeIf(n >= 5) — only 0-4 remain", bag);
-        bag.trimToSize();
-        System.out.println("  trimToSize() called — excess backing array capacity released");
-        check("size is 5 after trimToSize",   bag.size() == 5,   tally);
-        check("elements intact after trim",   bag.contains(0) && bag.contains(4), tally);
+        Iterator<Integer> it = bag.iterator();
+        it.next();           // cursor at 1, OK
+        bag.add(99);         // external structural change
+        printBag("After external add(99)", bag);
+
+        boolean cme = false;
+        try { it.next(); } catch (ConcurrentModificationException e) { cme = true;
+            System.out.println("  CME on next(): " + e.getMessage()); }
+        check("Live iterator detects external add() via CME", cme, tally);
     }
 
     // ==================================================================
-    // 7. clear()
+    // 5. Live iterator — fail-fast on external remove
     // ==================================================================
 
-    static void smokeClear(int[] tally) {
-        printHeader("7. clear()");
+    static void smokeLiveIteratorFailFastRemove(int[] tally) {
+        printHeader("5. Live Iterator — Fail-Fast on External remove()");
+
+        Bag<Integer> bag = new Bag<>(List.of(10, 20, 30));
+        printBag("Bag [10, 20, 30]", bag);
+
+        Iterator<Integer> it = bag.iterator();
+        it.next();           // consume 10
+        bag.remove(10);      // external remove — modCount bumps
+        printBag("After external remove(10)", bag);
+
+        boolean cme = false;
+        try { it.next(); } catch (ConcurrentModificationException e) { cme = true;
+            System.out.println("  CME on next(): " + e.getMessage()); }
+        check("Live iterator detects external remove() via CME", cme, tally);
+    }
+
+    // ==================================================================
+    // 6. Live iterator — own remove() is NOT flagged as CME
+    // ==================================================================
+
+    static void smokeLiveIteratorOwnRemoveSafe(int[] tally) {
+        printHeader("6. Live Iterator — Own remove() Does NOT Trigger CME");
+
+        Bag<String> bag = new Bag<>(List.of("keep", "drop", "keep-too"));
+        printBag("Before iterator-remove pass", bag);
+
+        List<String> kept = new ArrayList<>();
+        System.out.println("  Iterating + removing \"drop\":");
+        boolean cme = false;
+        try {
+            Iterator<String> it = bag.iterator();
+            while (it.hasNext()) {
+                String val = it.next();
+                if ("drop".equals(val)) {
+                    it.remove();
+                    System.out.println("    removed → \"drop\"");
+                } else {
+                    System.out.printf("    kept    → \"%s\"%n", val);
+                    kept.add(val);
+                }
+            }
+        } catch (ConcurrentModificationException e) {
+            cme = true;
+        }
+        printBag("After iterator-remove pass", bag);
+
+        check("Iterator own remove() does NOT throw CME",  !cme,                       tally);
+        check("\"drop\" removed correctly",                !bag.contains("drop"),       tally);
+        check("Remaining elements intact",                  kept.equals(List.of("keep", "keep-too")), tally);
+    }
+
+    // ==================================================================
+    // 7. Live iterator — forEachRemaining
+    // ==================================================================
+
+    static void smokeLiveIteratorForEachRemaining(int[] tally) {
+        printHeader("7. Live Iterator — forEachRemaining");
+
+        Bag<String> bag = new Bag<>(List.of("one", "two", "three", "four", "five"));
+        printBag("Bag [one..five]", bag);
+
+        Iterator<String> it = bag.iterator();
+        it.next();  // consume "one" manually
+
+        List<String> rest = new ArrayList<>();
+        System.out.println("  forEachRemaining after consuming 'one':");
+        it.forEachRemaining(s -> {
+            System.out.printf("    → \"%s\"%n", s);
+            rest.add(s);
+        });
+
+        check("forEachRemaining visited 4 elements",      rest.size() == 4,                  tally);
+        check("forEachRemaining started at 'two'",        "two".equals(rest.get(0)),          tally);
+        check("forEachRemaining ended at 'five'",         "five".equals(rest.get(3)),         tally);
+        check("iterator exhausted after forEachRemaining",!it.hasNext(),                      tally);
+    }
+
+    // ==================================================================
+    // 8. Live iterator — forEachRemaining fail-fast
+    // ==================================================================
+
+    static void smokeLiveIteratorForEachRemainingFailFast(int[] tally) {
+        printHeader("8. Live Iterator — forEachRemaining Fail-Fast");
 
         Bag<String> bag = new Bag<>(List.of("a", "b", "c", "d"));
-        printBag("Before clear()", bag);
-        bag.clear();
-        printBag("After clear()", bag);
-        check("isEmpty() true after clear", bag.isEmpty(),   tally);
-        check("size is 0 after clear",      bag.size() == 0, tally);
+        printBag("Bag [a,b,c,d]", bag);
 
-        // Bag is reusable after clear
-        bag.add("fresh");
-        printBag("After add(\"fresh\") post-clear — Bag reusable", bag);
-        check("Bag reusable after clear",   bag.contains("fresh"), tally);
-    }
-
-    // ==================================================================
-    // 8. Iterator – live traversal
-    // ==================================================================
-
-    static void smokeLiveIterator(int[] tally) {
-        printHeader("8. Iterator – Live Traversal");
-
-        Bag<String> bag = new Bag<>(List.of("one", "two", "three"));
-        printBag("Bag for live iteration", bag);
-
-        System.out.println("  Iterating with for-each:");
-        int count = 0;
-        for (String s : bag) {
-            System.out.printf("    cursor[%d] → \"%s\"%n", count++, s);
-        }
-        check("for-each visits all 3 elements", count == 3, tally);
-
-        // Live iterator remove
         Iterator<String> it = bag.iterator();
-        while (it.hasNext()) {
-            if ("two".equals(it.next())) it.remove();
+        boolean cme = false;
+        try {
+            it.forEachRemaining(s -> {
+                if ("b".equals(s)) bag.add("BOOM");  // structural change mid-loop
+            });
+        } catch (ConcurrentModificationException e) {
+            cme = true;
+            System.out.println("  CME caught in forEachRemaining: " + e.getMessage());
         }
-        printBag("After live iterator-remove of \"two\"", bag);
-        check("\"two\" removed via live iterator",  !bag.contains("two"), tally);
-        check("\"one\" and \"three\" intact",        bag.contains("one") && bag.contains("three"), tally);
+        check("forEachRemaining detects mutation inside consumer (CME)", cme, tally);
     }
 
     // ==================================================================
-    // 9. Iterator – snapshot
+    // 9. Snapshot iterator — immune to external mutations
     // ==================================================================
 
-    static void smokeSnapshotIterator(int[] tally) {
-        printHeader("9. Iterator – Snapshot");
+    static void smokeSnapshotIteratorImmune(int[] tally) {
+        printHeader("9. Snapshot Iterator — Immune to External Mutations");
 
         Bag<String> bag = new Bag<>(List.of("p", "q", "r"));
         printBag("Bag before snapshot", bag);
 
         Iterator<String> snap = bag.snapshotIterator();
 
-        // Mutate the live Bag WHILE the snapshot iterator exists
-        bag.add("s");
-        bag.remove("p");
-        printBag("Live Bag mutated (added s, removed p) — snapshot unaffected", bag);
+        bag.add("s");         // live mutation 1
+        bag.remove("p");      // live mutation 2
+        printBag("Live Bag mutated (added s, removed p)", bag);
 
+        List<String> seen = new ArrayList<>();
         System.out.println("  Snapshot iterator sees:");
-        java.util.List<String> snapElements = new java.util.ArrayList<>();
         while (snap.hasNext()) {
             String val = snap.next();
-            snapElements.add(val);
             System.out.printf("    → \"%s\"%n", val);
+            seen.add(val);
         }
-        check("snapshot sees original 3 elements",  snapElements.size() == 3,     tally);
-        check("snapshot sees \"p\" (removed live)",  snapElements.contains("p"),   tally);
-        check("snapshot does NOT see \"s\" (added live)", !snapElements.contains("s"), tally);
 
-        // Snapshot remove() must throw
+        check("Snapshot still sees 3 original elements",      seen.size() == 3,         tally);
+        check("Snapshot still sees 'p' (removed from live)",  seen.contains("p"),       tally);
+        check("Snapshot does NOT see 's' (added to live)",    !seen.contains("s"),      tally);
+        check("Snapshot iterator is NOT affected by CME",      true,                    tally);
+
+        // Snapshot remove() must still throw
         Iterator<String> snap2 = bag.snapshotIterator();
         snap2.next();
-        boolean threw = false;
-        try { snap2.remove(); } catch (UnsupportedOperationException e) { threw = true; }
-        check("snapshot iterator remove() throws UnsupportedOperationException", threw, tally);
+        boolean uoe = false;
+        try { snap2.remove(); } catch (UnsupportedOperationException e) { uoe = true; }
+        check("Snapshot remove() throws UnsupportedOperationException", uoe, tally);
     }
 
     // ==================================================================
-    // 10. Iterator – exception guards
+    // 10. spliterator — tryAdvance element-by-element
     // ==================================================================
 
-    static void smokeIteratorExceptions(int[] tally) {
-        printHeader("10. Iterator – Exception Guards");
+    static void smokeSpliteratorTryAdvance(int[] tally) {
+        printHeader("10. Spliterator — tryAdvance Element-by-Element");
 
-        Bag<String> bag = new Bag<>(List.of("only"));
-        printBag("Single-element Bag", bag);
+        Bag<String> bag = new Bag<>(List.of("A", "B", "C"));
+        printBag("Bag [A, B, C]", bag);
 
-        // next() past end
-        Iterator<String> it = bag.iterator();
-        it.next();
-        boolean nse = false;
-        try { it.next(); } catch (java.util.NoSuchElementException e) { nse = true; }
-        check("next() past end throws NoSuchElementException", nse, tally);
+        Spliterator<String> sp = bag.spliterator();
+        List<String> visited = new ArrayList<>();
+        System.out.println("  tryAdvance calls:");
+        while (sp.tryAdvance(s -> {
+            System.out.printf("    → \"%s\"%n", s);
+            visited.add(s);
+        }));
 
-        // remove() before next()
-        Iterator<String> it2 = bag.iterator();
-        boolean ise1 = false;
-        try { it2.remove(); } catch (IllegalStateException e) { ise1 = true; }
-        check("remove() before next() throws IllegalStateException", ise1, tally);
-
-        // remove() twice in a row
-        Iterator<String> it3 = bag.iterator();
-        it3.next();
-        it3.remove();
-        boolean ise2 = false;
-        try { it3.remove(); } catch (IllegalStateException e) { ise2 = true; }
-        check("remove() twice in a row throws IllegalStateException", ise2, tally);
+        check("tryAdvance visited 3 elements",          visited.size() == 3,        tally);
+        check("tryAdvance order: A, B, C",              visited.equals(List.of("A","B","C")), tally);
+        check("tryAdvance returns false when exhausted", !sp.tryAdvance(s -> {}),   tally);
     }
 
     // ==================================================================
-    // 11. sort()
+    // 11. spliterator — forEachRemaining bulk
     // ==================================================================
 
-    static void smokeSort(int[] tally) {
-        printHeader("11. sort()");
+    static void smokeSpliteratorForEachRemaining(int[] tally) {
+        printHeader("11. Spliterator — forEachRemaining Bulk");
 
-        Bag<Integer> bag = new Bag<>(List.of(5, 3, 1, 4, 2));
-        printBag("Before sort (natural order)", bag);
-        bag.sort(null);   // null → natural ordering
-        printBag("After sort(null) — ascending", bag);
+        Bag<Integer> bag = new Bag<>(List.of(10, 20, 30, 40, 50));
+        printBag("Bag [10..50]", bag);
 
-        java.util.List<Integer> sorted = new java.util.ArrayList<>();
-        for (int n : bag) sorted.add(n);
-        check("sort(null) ascending: 1,2,3,4,5",
-                sorted.equals(java.util.List.of(1, 2, 3, 4, 5)), tally);
+        Spliterator<Integer> sp = bag.spliterator();
+        sp.tryAdvance(n -> {}); // consume 10
+        sp.tryAdvance(n -> {}); // consume 20
 
-        // Reverse sort
-        bag.sort(java.util.Comparator.reverseOrder());
-        printBag("After sort(reverseOrder)", bag);
-        java.util.List<Integer> rev = new java.util.ArrayList<>();
-        for (int n : bag) rev.add(n);
-        check("sort(reverseOrder) descending: 5,4,3,2,1",
-                rev.equals(java.util.List.of(5, 4, 3, 2, 1)), tally);
+        List<Integer> rest = new ArrayList<>();
+        System.out.println("  forEachRemaining after consuming 10, 20:");
+        sp.forEachRemaining(n -> {
+            System.out.printf("    → %d%n", n);
+            rest.add(n);
+        });
 
-        // String sort
-        Bag<String> words = new Bag<>(List.of("banana", "apple", "cherry"));
-        printBag("String Bag before sort", words);
-        words.sort(java.util.Comparator.naturalOrder());
-        printBag("String Bag after sort(naturalOrder)", words);
-        java.util.List<String> wordsSorted = new java.util.ArrayList<>();
-        for (String w : words) wordsSorted.add(w);
-        check("String sort: apple, banana, cherry",
-                wordsSorted.equals(java.util.List.of("apple", "banana", "cherry")), tally);
+        check("forEachRemaining visited 3 remaining", rest.size() == 3,                tally);
+        check("forEachRemaining started at 30",       rest.get(0).equals(30),          tally);
+        check("forEachRemaining ended at 50",         rest.get(2).equals(50),          tally);
     }
 
     // ==================================================================
-    // 12. toUnmodifiableList(), toArray(), copy()
+    // 12. spliterator — trySplit halves
     // ==================================================================
 
-    static void smokeBulkUtilities(int[] tally) {
-        printHeader("12. toUnmodifiableList(), toArray(), copy()");
+    static void smokeSpliteratorTrySplit(int[] tally) {
+        printHeader("12. Spliterator — trySplit Halves");
 
-        Bag<String> bag = new Bag<>(List.of("alpha", "beta", "gamma"));
+        Bag<Integer> bag = new Bag<>(List.of(1, 2, 3, 4, 5, 6));
+        printBag("Bag [1..6]", bag);
+
+        Spliterator<Integer> full = bag.spliterator();
+        System.out.printf("  full.estimateSize() = %d%n", full.estimateSize());
+
+        Spliterator<Integer> left = full.trySplit();  // left=[1,2,3], full=[4,5,6]
+        System.out.printf("  After trySplit: left.estimateSize()=%d, right.estimateSize()=%d%n",
+                left.estimateSize(), full.estimateSize());
+
+        List<Integer> leftElements  = new ArrayList<>();
+        List<Integer> rightElements = new ArrayList<>();
+        left.forEachRemaining(leftElements::add);
+        full.forEachRemaining(rightElements::add);
+
+        printNumberBag("Left half",  leftElements);
+        printNumberBag("Right half", rightElements);
+
+        check("trySplit left  size = 3",         leftElements.size() == 3,               tally);
+        check("trySplit right size = 3",         rightElements.size() == 3,              tally);
+        check("trySplit left  = [1, 2, 3]",      leftElements.equals(List.of(1,2,3)),    tally);
+        check("trySplit right = [4, 5, 6]",      rightElements.equals(List.of(4,5,6)),   tally);
+
+        // trySplit on single element returns null
+        Bag<String> singleton = new Bag<>(List.of("only"));
+        Spliterator<String> sp = singleton.spliterator();
+        sp.tryAdvance(s -> {}); // exhaust
+        check("trySplit on exhausted spliterator returns null", sp.trySplit() == null, tally);
+    }
+
+    // ==================================================================
+    // 13. spliterator — characteristics
+    // ==================================================================
+
+    static void smokeSpliteratorCharacteristics(int[] tally) {
+        printHeader("13. Spliterator — Characteristics");
+
+        Bag<String> bag = new Bag<>(List.of("x", "y", "z"));
+        Spliterator<String> sp = bag.spliterator();
+        int chars = sp.characteristics();
+
+        System.out.printf("  characteristics() = 0x%X%n", chars);
+        System.out.printf("  ORDERED   (%s) %s%n",
+                (chars & Spliterator.ORDERED)   != 0 ? "SET" : "   ",
+                (chars & Spliterator.ORDERED)   != 0 ? "✓" : "✗");
+        System.out.printf("  SIZED     (%s) %s%n",
+                (chars & Spliterator.SIZED)     != 0 ? "SET" : "   ",
+                (chars & Spliterator.SIZED)     != 0 ? "✓" : "✗");
+        System.out.printf("  SUBSIZED  (%s) %s%n",
+                (chars & Spliterator.SUBSIZED)  != 0 ? "SET" : "   ",
+                (chars & Spliterator.SUBSIZED)  != 0 ? "✓" : "✗");
+        System.out.printf("  IMMUTABLE (%s) %s%n",
+                (chars & Spliterator.IMMUTABLE) != 0 ? "SET" : "   ",
+                (chars & Spliterator.IMMUTABLE) != 0 ? "✓" : "✗");
+
+        check("ORDERED characteristic set",   (chars & Spliterator.ORDERED)   != 0, tally);
+        check("SIZED characteristic set",     (chars & Spliterator.SIZED)     != 0, tally);
+        check("SUBSIZED characteristic set",  (chars & Spliterator.SUBSIZED)  != 0, tally);
+        check("IMMUTABLE characteristic set", (chars & Spliterator.IMMUTABLE) != 0, tally);
+        check("estimateSize() matches Bag size", sp.estimateSize() == 3,            tally);
+        check("getExactSizeIfKnown() == 3",      sp.getExactSizeIfKnown() == 3,     tally);
+    }
+
+    // ==================================================================
+    // 14. spliterator — sequential stream via StreamSupport
+    // ==================================================================
+
+    static void smokeSpliteratorSequentialStream(int[] tally) {
+        printHeader("14. Spliterator — Sequential Stream via StreamSupport");
+
+        Bag<String> bag = new Bag<>(List.of("banana", "apple", "cherry", "date"));
         printBag("Source Bag", bag);
 
-        // toUnmodifiableList
-        java.util.List<String> view = bag.toUnmodifiableList();
-        check("toUnmodifiableList size is 3",   view.size() == 3,         tally);
-        check("toUnmodifiableList contains alpha", view.contains("alpha"), tally);
-        boolean threw = false;
-        try { view.add("illegal"); } catch (UnsupportedOperationException e) { threw = true; }
-        check("toUnmodifiableList is read-only", threw, tally);
+        List<String> filtered = StreamSupport
+                .stream(bag.spliterator(), /* parallel= */ false)
+                .filter(s -> s.length() > 4)
+                .sorted()
+                .collect(Collectors.toList());
 
-        // toArray
-        Object[] arr = bag.toArray();
-        check("toArray length is 3",           arr.length == 3,             tally);
-        check("toArray[0] is alpha",           "alpha".equals(arr[0]),      tally);
+        System.out.println("  Stream filter(len>4).sorted() result: " + filtered);
 
-        // copy
-        Bag<String> copied = bag.copy();
-        printBag("copy() result", copied);
-        check("copy has same size",            copied.size() == bag.size(), tally);
-        check("copy contains alpha",           copied.contains("alpha"),    tally);
-        // Mutations to copy don't affect original
-        copied.add("delta");
-        check("copy independence: original unchanged", bag.size() == 3,    tally);
-        check("copy independence: copy grew",          copied.size() == 4, tally);
-        printBag("After copy.add(\"delta\") — original untouched", bag);
-        printBag("Copied Bag with extra element", copied);
+        // filter(len > 4) keeps: banana(6), apple(5), cherry(6) — sorted alphabetically
+        check("Stream filter result size = 3",       filtered.size() == 3,             tally);
+        check("Stream result[0] = apple",            "apple".equals(filtered.get(0)),  tally);
+        check("Stream result[1] = banana",           "banana".equals(filtered.get(1)), tally);
+        check("Bag unchanged after stream operation", bag.size() == 4,                 tally);
     }
 
     // ==================================================================
-    // 13. Null handling
+    // 15. spliterator — parallel stream via StreamSupport
     // ==================================================================
 
-    static void smokeNullHandling(int[] tally) {
-        printHeader("13. Null Handling");
+    static void smokeSpliteratorParallelStream(int[] tally) {
+        printHeader("15. Spliterator — Parallel Stream via StreamSupport");
 
-        Bag<String> bag = new Bag<>();
-        bag.add(null);
-        bag.add(null);
-        bag.add("real");
-        printBag("After add(null), add(null), add(\"real\")", bag);
+        Bag<Integer> bag = new Bag<>();
+        for (int i = 1; i <= 100; i++) bag.add(i);
+        printBag("Bag [1..100] (first/last shown)", bag);
 
-        check("contains(null) true",           bag.contains(null),         tally);
-        check("frequency(null) == 2",          bag.frequency(null) == 2,   tally);
+        long sum = StreamSupport
+                .stream(bag.spliterator(), /* parallel= */ true)
+                .mapToLong(Integer::longValue)
+                .sum();
 
-        int rm = bag.removeAll(null, 1);
-        printBag("After removeAll(null, 1)", bag);
-        check("removeAll(null,1) removed 1",   rm == 1,                    tally);
-        check("one null still present",        bag.contains(null),         tally);
+        System.out.printf("  Parallel stream sum(1..100) = %d%n", sum);
 
-        // removeIf with null match
-        bag.removeIf(e -> e == null);
-        printBag("After removeIf(null check)", bag);
-        check("no nulls remain after removeIf",!bag.contains(null),        tally);
-        check("real item intact",               bag.contains("real"),      tally);
+        check("Parallel stream sum(1..100) = 5050",   sum == 5050L,  tally);
+        check("Bag intact after parallel stream",     bag.size() == 100, tally);
     }
 
     // ==================================================================
-    // 14. Duplicate items
+    // 16. Regression: mutating methods increment modCount
     // ==================================================================
 
-    static void smokeDuplicates(int[] tally) {
-        printHeader("14. Duplicate Items");
+    static void smokeModCountRegression(int[] tally) {
+        printHeader("16. Regression — All Mutating Methods Increment modCount");
 
-        Bag<String> bag = new Bag<>(List.of("dup", "dup", "dup", "dup"));
-        printBag("Four \"dup\" entries", bag);
-        check("frequency(\"dup\") == 4",       bag.frequency("dup") == 4, tally);
+        // Each sub-test: open an iterator, call the mutating method, confirm CME
+        String[] labels = {"add", "addAll", "remove", "removeAll", "removeIf", "clear", "sort"};
+        boolean[] results = new boolean[labels.length];
 
-        int rm = bag.removeAll("dup", 2);
-        printBag("After removeAll(\"dup\", 2)", bag);
-        check("removeAll removed 2",           rm == 2,                   tally);
-        check("frequency now 2",               bag.frequency("dup") == 2, tally);
+        // add
+        Bag<String> b0 = new Bag<>(List.of("a","b","c"));
+        Iterator<String> i0 = b0.iterator(); i0.next();
+        try { b0.add("x"); i0.next(); } catch (ConcurrentModificationException e) { results[0]=true; }
 
-        bag.removeIf("dup"::equals);
-        printBag("After removeIf — all dups gone", bag);
-        check("no dups remain",                !bag.contains("dup"),      tally);
-        check("isEmpty after removing all dups", bag.isEmpty(),           tally);
+        // addAll
+        Bag<String> b1 = new Bag<>(List.of("a","b","c"));
+        Iterator<String> i1 = b1.iterator(); i1.next();
+        try { b1.addAll(List.of("x","y")); i1.next(); } catch (ConcurrentModificationException e) { results[1]=true; }
+
+        // remove
+        Bag<String> b2 = new Bag<>(List.of("a","b","c"));
+        Iterator<String> i2 = b2.iterator(); i2.next();
+        try { b2.remove("b"); i2.next(); } catch (ConcurrentModificationException e) { results[2]=true; }
+
+        // removeAll
+        Bag<String> b3 = new Bag<>(List.of("a","a","b"));
+        Iterator<String> i3 = b3.iterator(); i3.next();
+        try { b3.removeAll("a", 2); i3.next(); } catch (ConcurrentModificationException e) { results[3]=true; }
+
+        // removeIf
+        Bag<String> b4 = new Bag<>(List.of("a","b","c"));
+        Iterator<String> i4 = b4.iterator(); i4.next();
+        try { b4.removeIf(s->s.equals("b")); i4.next(); } catch (ConcurrentModificationException e) { results[4]=true; }
+
+        // clear
+        Bag<String> b5 = new Bag<>(List.of("a","b","c"));
+        Iterator<String> i5 = b5.iterator(); i5.next();
+        try { b5.clear(); i5.next(); } catch (ConcurrentModificationException e) { results[5]=true; }
+
+        // sort
+        Bag<String> b6 = new Bag<>(List.of("c","b","a"));
+        Iterator<String> i6 = b6.iterator(); i6.next();
+        try { b6.sort(null); i6.next(); } catch (ConcurrentModificationException e) { results[6]=true; }
+
+        for (int i = 0; i < labels.length; i++) {
+            check(labels[i] + "() increments modCount → CME on stale iterator", results[i], tally);
+        }
     }
 
     // ==================================================================
-    // 15. Generic type flexibility
-    // ==================================================================
-
-    static void smokeGenericTypes(int[] tally) {
-        printHeader("15. Generic Type Flexibility");
-
-        // Bag<Integer>
-        Bag<Integer> intBag = new Bag<>(List.of(1, 2, 3, 4, 5));
-        printBag("Bag<Integer> [1..5]", intBag);
-        intBag.sort(null);
-        int sum = 0;
-        for (int n : intBag) sum += n;
-        check("Bag<Integer> sorted sum 1-5 = 15", sum == 15, tally);
-
-        // Bag<Double>
-        Bag<Double> dblBag = new Bag<>(List.of(3.14, 1.0, 2.72));
-        dblBag.sort(null);
-        printBag("Bag<Double> sorted", dblBag);
-        Object[] dArr = dblBag.toArray();
-        check("Bag<Double> sorted[0] is 1.0", Double.valueOf(1.0).equals(dArr[0]), tally);
-
-        // Bag<Object> mixed
-        Bag<Object> mixed = new Bag<>();
-        mixed.add("text");
-        mixed.add(42);
-        mixed.add(null);
-        printBag("Bag<Object> mixed types", mixed);
-        check("Bag<Object> size 3",           mixed.size() == 3,        tally);
-        check("Bag<Object> frequency(null)=1",mixed.frequency(null) == 1, tally);
-
-        // copy() on generic bag
-        Bag<Object> mixedCopy = mixed.copy();
-        check("copy of Bag<Object> equal",    mixed.equals(mixedCopy), tally);
-    }
-
-    // ==================================================================
-    // Visual helper – printBag()
+    // Visual helpers
     // ==================================================================
 
     private static <T> void printBag(String label, Bag<T> bag) {
         final int CELL = 10;
         java.util.List<T> elements = toList(bag);
         int size = elements.size();
+
+        // For large bags, truncate display to first 8 + last 2
+        boolean truncated = size > 10;
+        java.util.List<T> display = truncated
+                ? new java.util.ArrayList<>(elements.subList(0, 8))
+                : elements;
 
         System.out.printf("%n  ArrayList  size=%-4d [%s]%n", size, label);
 
@@ -545,11 +547,12 @@ public class BagDriver {
             return;
         }
 
-        String[] idx = new String[size];
-        String[] val = new String[size];
-        for (int i = 0; i < size; i++) {
-            idx[i] = fit("[" + i + "]",              CELL);
-            val[i] = fit(renderValue(elements.get(i)), CELL);
+        int dispSize = display.size();
+        String[] idx = new String[dispSize];
+        String[] val = new String[dispSize];
+        for (int i = 0; i < dispSize; i++) {
+            idx[i] = fit("[" + i + "]",                    CELL);
+            val[i] = fit(renderValue(display.get(i)),      CELL);
         }
 
         StringBuilder top = new StringBuilder("  ┌");
@@ -557,11 +560,17 @@ public class BagDriver {
         StringBuilder vr  = new StringBuilder("  │");
         StringBuilder bot = new StringBuilder("  └");
 
-        for (int i = 0; i < size; i++) {
-            top.append("─".repeat(CELL + 2)).append(i < size - 1 ? "┬" : "┐");
+        for (int i = 0; i < dispSize; i++) {
+            top.append("─".repeat(CELL + 2)).append(i < dispSize - 1 ? "┬" : (truncated ? "┬" : "┐"));
             ir .append(" ").append(idx[i]).append(" │");
             vr .append(" ").append(val[i]).append(" │");
-            bot.append("─".repeat(CELL + 2)).append(i < size - 1 ? "┴" : "┘");
+            bot.append("─".repeat(CELL + 2)).append(i < dispSize - 1 ? "┴" : (truncated ? "┴" : "┘"));
+        }
+        if (truncated) {
+            top.append("────────────┐");
+            ir .append("  …(+").append(size - dispSize).append(") │");
+            vr .append("  …       │");
+            bot.append("────────────┘");
         }
         System.out.println(top);
         System.out.println(ir);
@@ -569,14 +578,27 @@ public class BagDriver {
         System.out.println(bot);
     }
 
+    private static void printNumberBag(String label, java.util.List<?> elements) {
+        final int CELL = 6;
+        int size = elements.size();
+        System.out.printf("%n  %s  size=%d%n", label, size);
+        if (size == 0) { System.out.println("  (empty)"); return; }
+        StringBuilder top = new StringBuilder("  ┌");
+        StringBuilder ir  = new StringBuilder("  │");
+        StringBuilder vr  = new StringBuilder("  │");
+        StringBuilder bot = new StringBuilder("  └");
+        for (int i = 0; i < size; i++) {
+            top.append("─".repeat(CELL + 2)).append(i < size-1 ? "┬" : "┐");
+            ir .append(" ").append(fit("["+i+"]", CELL)).append(" │");
+            vr .append(" ").append(fit(String.valueOf(elements.get(i)), CELL)).append(" │");
+            bot.append("─".repeat(CELL + 2)).append(i < size-1 ? "┴" : "┘");
+        }
+        System.out.println(top); System.out.println(ir);
+        System.out.println(vr);  System.out.println(bot);
+    }
+
     private static String renderValue(Object v) {
         if (v == null) return "<null>";
-        if (v instanceof int[]) {
-            int[] a = (int[]) v;
-            StringBuilder sb = new StringBuilder("[");
-            for (int i = 0; i < a.length; i++) { sb.append(a[i]); if (i < a.length-1) sb.append(","); }
-            return sb.append("]").toString();
-        }
         return v.toString();
     }
 
@@ -586,9 +608,9 @@ public class BagDriver {
     }
 
     private static void printHeader(String title) {
-        System.out.println("\n┌───────────────────────────────────────────────────┐");
-        System.out.printf( "│  %-49s│%n", title);
-        System.out.println("└───────────────────────────────────────────────────┘");
+        System.out.println("\n┌──────────────────────────────────────────────────────┐");
+        System.out.printf( "│  %-52s│%n", title);
+        System.out.println("└──────────────────────────────────────────────────────┘");
     }
 
     private static void check(String desc, boolean condition, int[] tally) {

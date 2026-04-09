@@ -4,56 +4,69 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.ConcurrentModificationException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
- * An optimized generic Bag collection backed by an ArrayList.
+ * A generic, fail-fast Bag collection backed by an {@link ArrayList}.
  *
- * <h2>Optimizations over the baseline</h2>
- * <ol>
- *   <li><b>add(E)</b> – unchanged in signature, but a bulk {@code addAll(Collection)}
- *       companion is added so multiple items can be appended in one internal
- *       {@link ArrayList#addAll} call instead of looping through individual adds.
- *       {@code ArrayList.addAll} uses {@code System.arraycopy} internally, which is
- *       a single native memory-copy rather than N separate bounds-checked writes.</li>
+ * <h2>New in this version: {@code forEach}, {@code spliterator}, fail-fast</h2>
  *
- *   <li><b>remove(E)</b> – the original scans from index 0 every time (O(n)).
- *       A {@code removeAll(E, int)} overload lets callers remove several copies in
- *       one pass. A {@code removeIf(Predicate)} companion delegates to
- *       {@link ArrayList#removeIf}, which uses a bitmask sweep and a single
- *       compaction pass — far cheaper than calling {@code remove()} in a loop.</li>
+ * <h3>1 — Fail-fast modification counter ({@code modCount})</h3>
+ * <p>Every method that structurally changes the Bag (add, remove, clear, sort …)
+ * increments an {@code int modCount} field.  Both the live iterator and the
+ * spliterator snapshot {@code modCount} at construction time and compare against
+ * it on every step.  If the counts differ a
+ * {@link ConcurrentModificationException} is thrown immediately, making
+ * unauthorized concurrent modifications visible at the earliest possible moment
+ * rather than silently producing wrong results.  This is the same contract
+ * provided by {@link ArrayList}, {@link java.util.HashMap}, and every other
+ * standard-library collection.</p>
  *
- *   <li><b>contains(E)</b> – still O(n) for a general Bag, but a
- *       {@code frequency(E)} helper is added that counts occurrences in one pass
- *       rather than forcing callers to loop themselves. A short-circuit fast-path
- *       using {@code isEmpty()} is also applied so an empty Bag never enters
- *       the scan loop at all.</li>
+ * <h3>2 — {@code forEach(Consumer)}</h3>
+ * <p>{@link Iterable#forEach} has a default implementation in the JDK that
+ * simply calls {@code iterator()} and loops — correct but not optimal.  This
+ * class overrides it with a direct indexed loop over the backing array so that:
+ * <ul>
+ *   <li>No {@code Iterator} object is heap-allocated.</li>
+ *   <li>No per-element {@code hasNext()} / {@code next()} virtual dispatch occurs.</li>
+ *   <li>The JIT can more aggressively inline the loop body.</li>
+ *   <li>A single {@code modCount} check after the loop body catches any
+ *       structural modification performed <em>inside</em> the consumer lambda,
+ *       throwing {@link ConcurrentModificationException} rather than silently
+ *       skipping or double-visiting elements.</li>
+ * </ul>
  *
- *   <li><b>size() / isEmpty()</b> – {@code isEmpty()} is reimplemented as
- *       {@code items.isEmpty()} (unchanged) but documented to clarify it is O(1)
- *       and preferred over {@code size() == 0} in conditional checks.</li>
- *
- *   <li><b>iterator()</b> – the {@code BagIterator} is promoted to a
- *       <em>snapshot iterator</em> variant via an optional constructor flag.
- *       The default iterator still walks the live backing list (fast, no copy).
- *       When a snapshot is requested, the iterator works on an immutable copy of
- *       the element array captured at construction time, so concurrent external
- *       changes to the Bag do not corrupt ongoing traversal.</li>
- *
- *   <li><b>Memory / capacity management</b> – {@code trimToSize()} exposes the
- *       underlying {@link ArrayList#trimToSize()} so callers can reclaim wasted
- *       capacity after bulk removals. {@code ensureCapacity(int)} pre-allocates
- *       before known bulk inserts to prevent repeated array doublings.</li>
- *
- *   <li><b>Bulk / utility methods</b> – {@code clear()}, {@code sort(Comparator)},
- *       {@code toArray()}, {@code copy()}, and {@code toUnmodifiableList()} are
- *       added. None of these change {@code Container<E>} — they enrich the
- *       concrete class without touching the interface.</li>
- * </ol>
+ * <h3>3 — {@code spliterator()}</h3>
+ * <p>A custom {@code BagSpliterator} is returned.  It advertises four
+ * characteristics that enable important optimisations in the Streams API and
+ * in parallel-decomposition frameworks:
+ * <ul>
+ *   <li>{@link Spliterator#ORDERED} — elements have a defined encounter order
+ *       (insertion order); the Stream API preserves this order.</li>
+ *   <li>{@link Spliterator#SIZED} — {@code estimateSize()} returns the exact
+ *       remaining element count, allowing the framework to pre-size downstream
+ *       collections and balance parallel splits without trial-and-error.</li>
+ *   <li>{@link Spliterator#SUBSIZED} — both halves produced by {@code trySplit()}
+ *       also know their exact sizes, enabling perfectly balanced recursive
+ *       parallel splits (fork/join work-stealing is most efficient when halves
+ *       are equal).</li>
+ *   <li>{@link Spliterator#IMMUTABLE} — the spliterator operates on a snapshot
+ *       array taken at construction time; the backing Bag may be mutated without
+ *       invalidating an in-progress split/traverse sequence.  This removes the
+ *       need for locks around parallel reads.</li>
+ * </ul>
+ * <p>{@code trySplit()} divides the remaining range exactly in half, returning
+ * the left half as a new spliterator while this instance advances to cover the
+ * right half.  This is the ideal strategy for array-backed data: both halves
+ * are contiguous, cache-friendly, and precisely sized.</p>
  *
  * @param <E> the type of elements held in this Bag
  */
@@ -63,43 +76,42 @@ public class Bag<E> implements Container<E> {
     // Constants
     // ---------------------------------------------------------------
 
-    /** Default initial capacity — matches ArrayList's own default. */
     private static final int DEFAULT_CAPACITY = 10;
 
     // ---------------------------------------------------------------
-    // Backing data structure
+    // Backing data structure + modification counter
     // ---------------------------------------------------------------
 
     private final ArrayList<E> items;
+
+    /**
+     * Structural-modification counter.
+     *
+     * <p>Incremented by every method that changes the <em>size</em> of the Bag
+     * or otherwise alters it in a way that would make an in-progress traversal
+     * return incorrect results.  Both {@link BagIterator} and
+     * {@link BagSpliterator} capture this value at construction and compare on
+     * every step, throwing {@link ConcurrentModificationException} if the value
+     * has changed.</p>
+     *
+     * <p>Mutating methods that increment {@code modCount}:
+     * {@link #add}, {@link #addAll}, {@link #remove}, {@link #removeAll},
+     * {@link #removeIf}, {@link #clear}, {@link #sort}.</p>
+     */
+    private int modCount = 0;
 
     // ---------------------------------------------------------------
     // Constructors
     // ---------------------------------------------------------------
 
-    /**
-     * Creates an empty Bag with the default initial capacity ({@value DEFAULT_CAPACITY}).
-     *
-     * <p><b>Optimization:</b> Passing an explicit capacity of {@value DEFAULT_CAPACITY}
-     * to the ArrayList constructor pre-allocates the internal array immediately,
-     * avoiding the lazy-allocation path that ArrayList uses when constructed with
-     * no arguments (which defers allocation until the first {@code add()}).
-     * For a Bag that almost always receives at least one element this removes
-     * one extra array allocation on first use.</p>
-     */
+    /** Creates an empty Bag with the default initial capacity. */
     public Bag() {
         this.items = new ArrayList<>(DEFAULT_CAPACITY);
     }
 
     /**
-     * Creates an empty Bag with the specified initial capacity.
+     * Creates an empty Bag pre-sized for {@code initialCapacity} elements.
      *
-     * <p><b>Optimization:</b> Use this constructor when you know roughly how many
-     * elements the Bag will hold. Pre-sizing eliminates the internal array-doubling
-     * resize copies that would otherwise occur as the list grows past 10, 20, 40 …
-     * elements. Each resize is O(n) (a {@code System.arraycopy}), so avoiding k
-     * resizes saves O(n·k) work.</p>
-     *
-     * @param initialCapacity number of elements to pre-allocate space for
      * @throws IllegalArgumentException if {@code initialCapacity} is negative
      */
     public Bag(int initialCapacity) {
@@ -111,16 +123,8 @@ public class Bag<E> implements Container<E> {
     }
 
     /**
-     * Creates a Bag pre-populated with all elements from the given collection.
+     * Creates a Bag pre-populated with all elements from {@code source}.
      *
-     * <p><b>Optimization:</b> Delegates to {@link ArrayList#ArrayList(Collection)},
-     * which calls {@code collection.toArray()} and then a single
-     * {@code System.arraycopy} into the backing array — O(n) with the smallest
-     * possible constant. This is faster than constructing an empty Bag and
-     * calling {@code add()} n times because it avoids n separate bounds checks
-     * and potential mid-sequence resizes.</p>
-     *
-     * @param source the collection whose elements populate this Bag; must not be null
      * @throws NullPointerException if {@code source} is null
      */
     public Bag(Collection<? extends E> source) {
@@ -129,248 +133,211 @@ public class Bag<E> implements Container<E> {
     }
 
     // ---------------------------------------------------------------
-    // Container<E> interface methods
+    // Container<E> — mutating methods (each increments modCount)
     // ---------------------------------------------------------------
 
     /**
-     * Appends {@code item} to the end of this Bag.
-     * Null items and duplicates are both permitted.
+     * Appends {@code item} to the end of this Bag and increments {@code modCount}.
      *
-     * <p><b>Complexity:</b> Amortized O(1). When the backing array has spare
-     * capacity this is a single bounds-checked array write. A resize is O(n)
-     * but occurs at most O(log n) times over n total adds.</p>
-     *
-     * @param item the element to add; may be null
+     * <p>Null items and duplicates are permitted.</p>
      */
     @Override
     public void add(E item) {
         items.add(item);
+        modCount++;          // structural change — live iterators must detect this
     }
 
     /**
-     * Appends all elements in {@code newItems} to this Bag in the order returned
-     * by the collection's iterator.
+     * Appends all elements of {@code newItems} in a single bulk copy, then
+     * increments {@code modCount} once regardless of how many elements were added.
      *
-     * <p><b>Optimization over repeated add():</b> {@link ArrayList#addAll} calls
-     * {@code newItems.toArray()} and then a single {@code System.arraycopy} into
-     * the backing array — one native memory-copy regardless of how many elements
-     * are being added. Calling {@code add()} in a loop would perform n separate
-     * bounds-checked writes and potentially trigger multiple resizes.</p>
+     * <p>A single {@code modCount} increment is correct here because the entire
+     * operation is atomic from the perspective of any iterator: either all
+     * elements are present or none are.</p>
      *
-     * @param newItems elements to add; must not be null (elements themselves may be null)
      * @throws NullPointerException if {@code newItems} is null
      */
     public void addAll(Collection<? extends E> newItems) {
         Objects.requireNonNull(newItems, "newItems collection must not be null");
-        items.addAll(newItems);
+        if (!newItems.isEmpty()) {
+            items.addAll(newItems);
+            modCount++;      // one increment covers the entire bulk add
+        }
     }
 
     /**
-     * Removes the <em>first</em> occurrence of {@code item} from this Bag.
-     *
-     * <p><b>Complexity:</b> O(n) — a linear scan followed by a left-shift of
-     * all elements after the removed index.</p>
-     *
-     * <p><b>Optimization note:</b> For bulk removal, prefer {@link #removeIf}
-     * or {@link #removeAll(Object, int)} rather than calling this method in a
-     * loop. Those methods perform a single-pass sweep + one compaction, which
-     * is O(n) total instead of O(n·k) for k individual calls.</p>
-     *
-     * @param item the element to remove; may be null
-     * @return {@code true} if the Bag was modified
+     * Removes the first occurrence of {@code item} and increments {@code modCount}
+     * only when the Bag was actually modified.
      */
     @Override
     public boolean remove(E item) {
-        return items.remove(item);
+        boolean changed = items.remove(item);
+        if (changed) modCount++;
+        return changed;
     }
 
     /**
-     * Removes up to {@code maxCount} occurrences of {@code item} from this Bag
-     * in a single O(n) pass.
+     * Removes up to {@code maxCount} occurrences of {@code item} in a single
+     * O(n) bitmask-sweep pass, then increments {@code modCount} once if any
+     * element was removed.
      *
-     * <p><b>Optimization:</b> Internally this delegates to {@link ArrayList#removeIf}
-     * with a stateful counter predicate. {@code ArrayList.removeIf} uses a bitmask
-     * to mark elements for removal and then compacts the array in one sweep —
-     * O(n) total regardless of how many elements are removed. Calling
-     * {@link #remove(Object)} k times would cost O(n·k) because each call
-     * rescans from the beginning and shifts elements independently.</p>
-     *
-     * @param item     the element to remove; may be null
-     * @param maxCount maximum number of occurrences to remove; use
-     *                 {@link Integer#MAX_VALUE} to remove all occurrences
-     * @return number of elements actually removed (0 … maxCount)
      * @throws IllegalArgumentException if {@code maxCount} is negative
      */
     public int removeAll(E item, int maxCount) {
-        if (maxCount < 0) {
-            throw new IllegalArgumentException(
-                    "maxCount must be non-negative, got: " + maxCount);
-        }
+        if (maxCount < 0) throw new IllegalArgumentException(
+                "maxCount must be non-negative, got: " + maxCount);
         if (maxCount == 0 || items.isEmpty()) return 0;
 
-        // Use an int[] to capture mutable count inside the lambda
         int[] removed = {0};
         items.removeIf(element -> {
             if (removed[0] < maxCount && Objects.equals(element, item)) {
                 removed[0]++;
-                return true;   // mark for removal
+                return true;
             }
             return false;
         });
+        if (removed[0] > 0) modCount++;
         return removed[0];
     }
 
     /**
-     * Removes every element that satisfies the given predicate in a single O(n) pass.
+     * Removes every element satisfying {@code predicate} in one O(n) sweep,
+     * incrementing {@code modCount} once if any element was removed.
      *
-     * <p><b>Optimization:</b> Delegates directly to {@link ArrayList#removeIf},
-     * which uses a bitmask-sweep-and-compact strategy. This is O(n) with a very
-     * small constant — the entire list is touched exactly twice (once to mark,
-     * once to compact). An iterator-based removal loop would also be O(n) but
-     * with a larger constant because each removal shifts subsequent elements.</p>
-     *
-     * @param predicate condition that identifies elements to remove; must not be null
-     * @return {@code true} if any elements were removed
      * @throws NullPointerException if {@code predicate} is null
      */
     public boolean removeIf(Predicate<? super E> predicate) {
         Objects.requireNonNull(predicate, "Predicate must not be null");
-        return items.removeIf(predicate);
+        boolean changed = items.removeIf(predicate);
+        if (changed) modCount++;
+        return changed;
     }
 
     /**
-     * Returns {@code true} if this Bag contains at least one occurrence of {@code item}.
+     * Removes all elements from this Bag and increments {@code modCount}.
      *
-     * <p><b>Optimization — empty short-circuit:</b> An explicit {@code isEmpty()}
-     * guard is applied before delegating to {@link ArrayList#contains}. When the
-     * Bag is empty this avoids the method-dispatch chain inside {@code ArrayList}
-     * and returns immediately. For non-empty bags the call still delegates to
-     * the ArrayList's optimised linear scan.</p>
+     * <p>After this call {@code isEmpty()} returns {@code true}.</p>
+     */
+    public void clear() {
+        if (!items.isEmpty()) {
+            items.clear();
+            modCount++;
+        }
+    }
+
+    /**
+     * Sorts the elements in-place using {@code comparator} and increments
+     * {@code modCount} because the positional order of elements has changed.
      *
-     * <p><b>Complexity:</b> O(1) if empty; O(n) otherwise.</p>
-     *
-     * @param item the element to search for; may be null
-     * @return {@code true} if the item is present
+     * <p>Even though the <em>set</em> of elements is unchanged, an iterator
+     * that started before the sort would visit elements in a now-stale order,
+     * so the structural-change counter must be incremented.</p>
+     */
+    public void sort(Comparator<? super E> comparator) {
+        items.sort(comparator);
+        modCount++;          // positional change — iterators must restart
+    }
+
+    // ---------------------------------------------------------------
+    // Container<E> — non-mutating query methods
+    // ---------------------------------------------------------------
+
+    /**
+     * Returns {@code true} if this Bag contains at least one occurrence of
+     * {@code item}.  Empty-Bag short-circuit avoids the ArrayList scan entirely.
      */
     @Override
     public boolean contains(E item) {
-        // Fast-path: skip the ArrayList scan entirely for an empty Bag
         if (items.isEmpty()) return false;
         return items.contains(item);
     }
 
+    /** Returns the number of elements in this Bag. O(1). */
+    @Override
+    public int size() { return items.size(); }
+
+    /** Returns {@code true} when this Bag contains no elements. O(1). */
+    @Override
+    public boolean isEmpty() { return items.isEmpty(); }
+
     /**
      * Returns the number of times {@code item} appears in this Bag.
      *
-     * <p><b>Optimization over manual counting:</b> This performs a single O(n)
-     * pass through the backing array using a direct indexed loop (avoiding the
-     * overhead of creating an Iterator object). Callers who need the count
-     * should call this method once rather than combining repeated
-     * {@link #contains} + {@link #remove} calls, which would cost O(n·k).</p>
-     *
-     * @param item the element to count; may be null
-     * @return number of occurrences (0 if absent)
+     * <p>Performs a single O(n) indexed-loop pass; avoids {@code Iterator}
+     * allocation and per-element virtual dispatch.</p>
      */
     public int frequency(E item) {
         if (items.isEmpty()) return 0;
         int count = 0;
-        // Indexed loop avoids Iterator allocation and the associated hasNext()
-        // / next() virtual-dispatch overhead on every step.
         for (int i = 0, n = items.size(); i < n; i++) {
             if (Objects.equals(items.get(i), item)) count++;
         }
         return count;
     }
 
+    // ---------------------------------------------------------------
+    // forEach override — avoids Iterator allocation, fail-fast
+    // ---------------------------------------------------------------
+
     /**
-     * Returns the number of elements in this Bag.
+     * Performs {@code action} for each element in insertion order.
      *
-     * <p><b>Complexity:</b> O(1) — {@link ArrayList#size()} reads a single
-     * {@code int} field.</p>
+     * <h4>Why override the default?</h4>
+     * <p>The {@link Iterable#forEach} default implementation allocates an
+     * {@link Iterator} object and calls {@code hasNext()} / {@code next()} for
+     * every element — correct but carries per-element virtual-dispatch overhead.
+     * This override uses a direct indexed loop over the backing list, which:</p>
+     * <ul>
+     *   <li>Avoids heap-allocating an Iterator.</li>
+     *   <li>Lets the JIT inline the loop body more aggressively.</li>
+     *   <li>Performs a <em>single</em> {@code modCount} comparison after each
+     *       {@code action} call: if the consumer mutates the Bag (e.g. calls
+     *       {@code add()} inside a lambda) a
+     *       {@link ConcurrentModificationException} is thrown immediately rather
+     *       than silently producing a corrupted traversal.</li>
+     * </ul>
      *
-     * <p><b>Usage tip:</b> Prefer {@link #isEmpty()} over {@code size() == 0}
-     * in boolean contexts; both are O(1) but {@code isEmpty()} communicates
-     * intent more clearly and avoids the integer comparison.</p>
+     * <p><b>Fail-fast behaviour:</b> the expected modCount is captured once
+     * before the loop.  After each {@code action.accept(element)} call the
+     * current {@code modCount} is compared; any structural change throws
+     * {@link ConcurrentModificationException}.</p>
      *
-     * @return element count (always &ge; 0)
+     * @param action the operation to perform on each element; must not be null
+     * @throws NullPointerException          if {@code action} is null
+     * @throws ConcurrentModificationException if the Bag is structurally
+     *         modified during iteration
      */
     @Override
-    public int size() {
-        return items.size();
-    }
-
-    /**
-     * Returns {@code true} if this Bag contains no elements.
-     *
-     * <p><b>Complexity:</b> O(1) — reads {@code ArrayList.size} directly.</p>
-     *
-     * @return {@code true} when {@code size() == 0}
-     */
-    @Override
-    public boolean isEmpty() {
-        return items.isEmpty();
-    }
-
-    // ---------------------------------------------------------------
-    // Capacity management
-    // ---------------------------------------------------------------
-
-    /**
-     * Pre-allocates backing-array capacity for at least {@code minCapacity} elements.
-     *
-     * <p><b>Optimization:</b> Call this before a known bulk-insert sequence to
-     * guarantee that the backing array is large enough. This eliminates all
-     * internal resize-and-copy operations during the sequence. Each resize is
-     * O(n) (a {@code System.arraycopy}), so a single {@code ensureCapacity}
-     * call before inserting m elements saves up to O(n·log m) copy work.</p>
-     *
-     * @param minCapacity the minimum number of elements the Bag should be able
-     *                    to hold without resizing
-     */
-    public void ensureCapacity(int minCapacity) {
-        items.ensureCapacity(minCapacity);
-    }
-
-    /**
-     * Shrinks the backing array to exactly match the current size.
-     *
-     * <p><b>Optimization:</b> After large bulk removals the ArrayList may retain
-     * a much larger internal array than needed. Calling {@code trimToSize()}
-     * releases that excess memory. This is particularly valuable in long-lived
-     * Bags that grow to peak size and then shed most of their elements.</p>
-     */
-    public void trimToSize() {
-        items.trimToSize();
-    }
-
-    /**
-     * Removes all elements from this Bag, leaving it empty.
-     *
-     * <p><b>Optimization:</b> {@link ArrayList#clear()} null-fills the backing
-     * array in a tight loop and resets the size field — O(n) to allow GC of
-     * the element references. This is faster than removing elements one-by-one
-     * through the iterator because there are no index-recalculation or
-     * cursor-shift operations per element.</p>
-     */
-    public void clear() {
-        items.clear();
+    public void forEach(Consumer<? super E> action) {
+        Objects.requireNonNull(action, "action must not be null");
+        final int expectedModCount = modCount;   // snapshot before loop
+        final int size = items.size();
+        for (int i = 0; i < size; i++) {
+            action.accept(items.get(i));
+            // Check after every action call — catches mutations inside the lambda
+            if (modCount != expectedModCount) {
+                throw new ConcurrentModificationException(
+                        "Bag was structurally modified during forEach at index " + i);
+            }
+        }
     }
 
     // ---------------------------------------------------------------
-    // Iterable<E> interface method
+    // iterator — live, fail-fast
     // ---------------------------------------------------------------
 
     /**
-     * Returns a <em>live</em> iterator over the elements in this Bag in
-     * insertion order.
+     * Returns a live, fail-fast {@link Iterator} over the elements in insertion
+     * order.
      *
-     * <p>The iterator supports {@link Iterator#remove()}. It walks the backing
-     * ArrayList directly — no extra allocation beyond the iterator object itself.</p>
+     * <p>The iterator is <em>fail-fast</em>: it captures {@code modCount} at
+     * construction and checks it on every {@code hasNext()}, {@code next()}, and
+     * {@code remove()} call.  Any structural modification to the Bag after the
+     * iterator is created — other than through the iterator's own
+     * {@code remove()} — causes a {@link ConcurrentModificationException}.</p>
      *
-     * <p>To obtain a <em>snapshot</em> iterator that is immune to concurrent
-     * modifications to the Bag, call {@link #snapshotIterator()} instead.</p>
-     *
-     * @return a fresh live {@link Iterator} over the Bag's elements
+     * <p>For a traversal that is immune to concurrent modifications, use
+     * {@link #snapshotIterator()} instead.</p>
      */
     @Override
     public Iterator<E> iterator() {
@@ -378,133 +345,142 @@ public class Bag<E> implements Container<E> {
     }
 
     /**
-     * Returns a <em>snapshot</em> iterator that walks a private copy of the
-     * element array captured at the moment this method is called.
+     * Returns a snapshot {@link Iterator} that walks a private copy of the
+     * element array taken at the moment of this call.
      *
-     * <p><b>Optimization for concurrent-read scenarios:</b> The snapshot is taken
-     * by calling {@link ArrayList#toArray()}, which is a single
-     * {@code System.arraycopy} — O(n). The iterator then walks the fixed-length
-     * array rather than the live ArrayList, so any subsequent {@code add},
-     * {@code remove}, or {@code clear} on the Bag will not affect this traversal.
-     * This avoids the need for external synchronization or a
-     * {@code CopyOnWriteArrayList} when reads vastly outnumber writes.</p>
-     *
-     * <p><b>Trade-off:</b> The snapshot costs O(n) memory and one copy at
-     * construction time. Use the regular {@link #iterator()} when no concurrent
-     * modification is expected.</p>
-     *
-     * <p>The snapshot iterator does <em>not</em> support {@link Iterator#remove()};
-     * calling it throws {@link UnsupportedOperationException}.</p>
-     *
-     * @return a fresh snapshot {@link Iterator} over a copy of the Bag's elements
+     * <p>Subsequent structural modifications to the Bag (add, remove, clear …)
+     * do not affect this iterator.  The snapshot iterator does <em>not</em>
+     * support {@link Iterator#remove()}.</p>
      */
     public Iterator<E> snapshotIterator() {
         return new BagIterator(true);
     }
 
     // ---------------------------------------------------------------
-    // Utility / bulk operations
+    // spliterator — snapshot, ORDERED | SIZED | SUBSIZED | IMMUTABLE
     // ---------------------------------------------------------------
 
     /**
-     * Sorts the elements of this Bag in-place using the supplied comparator.
+     * Returns a {@link Spliterator} over the elements of this Bag.
      *
-     * <p><b>Optimization:</b> Delegates to {@link ArrayList#sort}, which uses
-     * a Timsort variant ({@link java.util.Arrays#sort}) on the backing array
-     * directly — O(n log n) with excellent cache locality because the sort
-     * operates on a contiguous {@code Object[]} array. Sorting into a new
-     * collection and copying back would double the memory and copy cost.</p>
+     * <h4>Why a custom spliterator?</h4>
+     * <p>The default {@code Iterable.spliterator()} creates a
+     * {@link Spliterators#spliteratorUnknownSize} wrapper around the iterator,
+     * which lacks size information and cannot split.  This custom implementation
+     * provides four characteristics that the Streams API exploits heavily:</p>
      *
-     * @param comparator defines the sort order; pass {@code null} to use the
-     *                   elements' natural ordering (elements must implement
-     *                   {@link Comparable})
-     */
-    public void sort(Comparator<? super E> comparator) {
-        items.sort(comparator);
-    }
-
-    /**
-     * Returns an unmodifiable {@link List} view of the elements in this Bag.
-     *
-     * <p><b>Optimization:</b> {@link Collections#unmodifiableList} wraps the
-     * existing ArrayList without copying it — O(1) creation cost. This is
-     * preferred over constructing a new {@code ArrayList} copy when the caller
-     * only needs read access.</p>
-     *
-     * <p>The returned list reflects subsequent changes to the Bag. If a true
-     * immutable snapshot is needed, use {@link #toArray()} or construct a
-     * {@code new ArrayList<>(bag.toUnmodifiableList())} instead.</p>
-     *
-     * @return a live, read-only list view of this Bag's contents
-     */
-    public List<E> toUnmodifiableList() {
-        return Collections.unmodifiableList(items);
-    }
-
-    /**
-     * Returns a new {@code Object[]} array containing all elements of this Bag
-     * in insertion order.
-     *
-     * <p><b>Optimization:</b> Delegates to {@link ArrayList#toArray()}, which
-     * calls {@code System.arraycopy} on the backing array — the fastest
-     * possible array copy on the JVM.</p>
-     *
-     * @return a fresh array snapshot of this Bag's contents
-     */
-    public Object[] toArray() {
-        return items.toArray();
-    }
-
-    /**
-     * Returns a shallow copy of this Bag containing the same elements in the
-     * same order.
-     *
-     * <p><b>Optimization:</b> Uses the {@link #Bag(Collection)} constructor,
-     * which copies via a single {@code System.arraycopy} rather than
-     * iterating and calling {@code add()} for each element.</p>
-     *
-     * @return a new Bag that is a shallow copy of this one
-     */
-    public Bag<E> copy() {
-        return new Bag<>(this.items);
-    }
-
-    // ---------------------------------------------------------------
-    // Private inner iterator class
-    // ---------------------------------------------------------------
-
-    /**
-     * Dual-mode iterator:
      * <ul>
-     *   <li><b>Live mode</b> ({@code snapshot=false}): walks the backing
-     *       ArrayList directly via index. Supports {@link #remove()}. Zero
-     *       extra allocation beyond the iterator object itself.</li>
-     *   <li><b>Snapshot mode</b> ({@code snapshot=true}): copies the current
-     *       element array once at construction ({@code System.arraycopy} via
-     *       {@code toArray()}) and walks the copy. Does not support
-     *       {@link #remove()}. Immune to concurrent modifications of the Bag.</li>
+     *   <li>{@link Spliterator#ORDERED} — encounter order is defined (insertion
+     *       order); {@code Stream.findFirst()}, {@code forEachOrdered()}, and
+     *       ordered collectors all rely on this.</li>
+     *   <li>{@link Spliterator#SIZED} — {@code estimateSize()} returns the
+     *       exact remaining count, letting the framework pre-size result
+     *       containers and estimate parallel work without probing.</li>
+     *   <li>{@link Spliterator#SUBSIZED} — both halves from {@code trySplit()}
+     *       also know their exact sizes, enabling perfectly balanced recursive
+     *       fork/join splits.  Without this flag the framework must treat
+     *       sub-spliterators as unsized.</li>
+     *   <li>{@link Spliterator#IMMUTABLE} — the spliterator operates on a
+     *       snapshot array; the Bag can be mutated concurrently without
+     *       corrupting an in-progress parallel stream pipeline.  This is
+     *       possible because we pay one O(n) copy cost upfront.</li>
+     * </ul>
+     *
+     * <h4>Splitting strategy</h4>
+     * <p>{@code trySplit()} divides the remaining range in half, returning the
+     * left half as a new {@code BagSpliterator} while this spliterator advances
+     * its {@code lo} to the midpoint.  Both halves cover contiguous slices of
+     * the snapshot array — optimal for cache locality and for the
+     * fork/join work-stealing scheduler.</p>
+     *
+     * @return a {@link BagSpliterator} over a snapshot of this Bag's elements
+     */
+    @Override
+    public Spliterator<E> spliterator() {
+        return new BagSpliterator(items.toArray(), 0, items.size());
+    }
+
+    // ---------------------------------------------------------------
+    // Capacity management
+    // ---------------------------------------------------------------
+
+    /** Pre-allocates backing-array capacity for {@code minCapacity} elements. */
+    public void ensureCapacity(int minCapacity) { items.ensureCapacity(minCapacity); }
+
+    /** Shrinks the backing array to exactly match the current size. */
+    public void trimToSize() { items.trimToSize(); }
+
+    // ---------------------------------------------------------------
+    // Utility / view methods
+    // ---------------------------------------------------------------
+
+    /** Returns an O(1) unmodifiable live view of this Bag's contents. */
+    public List<E> toUnmodifiableList() { return Collections.unmodifiableList(items); }
+
+    /** Returns a new {@code Object[]} snapshot of this Bag's elements. */
+    public Object[] toArray() { return items.toArray(); }
+
+    /** Returns a shallow copy of this Bag as a new, independent Bag. */
+    public Bag<E> copy() { return new Bag<>(this.items); }
+
+    // ---------------------------------------------------------------
+    // BagIterator — dual-mode (live fail-fast / snapshot read-only)
+    // ---------------------------------------------------------------
+
+    /**
+     * Dual-mode iterator.
+     *
+     * <h4>Live mode ({@code isSnapshot = false})</h4>
+     * <ul>
+     *   <li>Walks the backing ArrayList directly via index.</li>
+     *   <li>Captures {@code modCount} at construction; checks it on every call
+     *       to {@code hasNext()}, {@code next()}, and {@code remove()}.  Any
+     *       external structural change throws
+     *       {@link ConcurrentModificationException}.</li>
+     *   <li>Supports {@code remove()}, which uses the index-based
+     *       {@link ArrayList#remove(int)} to skip the equality scan, then
+     *       increments {@code modCount} and updates the expected count so that
+     *       the iterator's own removal is not misidentified as a concurrent
+     *       modification.</li>
+     * </ul>
+     *
+     * <h4>Snapshot mode ({@code isSnapshot = true})</h4>
+     * <ul>
+     *   <li>Copies the element array once at construction via
+     *       {@code items.toArray()} (single {@code System.arraycopy}).</li>
+     *   <li>Immune to structural changes on the live Bag.</li>
+     *   <li>{@code remove()} throws {@link UnsupportedOperationException}.</li>
      * </ul>
      */
     private class BagIterator implements Iterator<E> {
 
-        // In live mode: null. In snapshot mode: private copy of the element array.
-        private final Object[] snapshot;
+        private final Object[] snapshot;   // non-null only in snapshot mode
+        private final boolean  isSnapshot;
 
-        private int cursor = 0;
-        private boolean removable = false;   // only relevant in live mode
-        private final boolean isSnapshot;
+        // Live-mode state
+        private int     cursor           = 0;
+        private boolean removable        = false;
+        private int     expectedModCount;        // captured at construction
 
-        /**
-         * @param snapshot {@code true} → capture a snapshot array;
-         *                 {@code false} → walk the live list
-         */
         BagIterator(boolean snapshot) {
-            this.isSnapshot = snapshot;
-            this.snapshot   = snapshot ? items.toArray() : null;
+            this.isSnapshot       = snapshot;
+            this.snapshot         = snapshot ? items.toArray() : null;
+            this.expectedModCount = modCount;    // always snapshot, used in live mode
+        }
+
+        // -- fail-fast check helper --
+        private void checkForComodification() {
+            if (!isSnapshot && modCount != expectedModCount) {
+                throw new ConcurrentModificationException(
+                        "Bag was structurally modified while iterating. "
+                                + "Expected modCount=" + expectedModCount
+                                + ", actual modCount=" + modCount);
+            }
         }
 
         @Override
         public boolean hasNext() {
+            checkForComodification();   // detect external mutation even on hasNext
             int limit = isSnapshot ? snapshot.length : items.size();
             return cursor < limit;
         }
@@ -512,49 +488,194 @@ public class Bag<E> implements Container<E> {
         @Override
         @SuppressWarnings("unchecked")
         public E next() {
-            if (!hasNext()) {
+            checkForComodification();
+            int limit = isSnapshot ? snapshot.length : items.size();
+            if (cursor >= limit) {
                 throw new NoSuchElementException(
                         "No more elements in Bag (size=" + size() + ")");
             }
-            E element;
-            if (isSnapshot) {
-                element = (E) snapshot[cursor];
-            } else {
-                element = items.get(cursor);
-                removable = true;
-            }
+            E element = isSnapshot ? (E) snapshot[cursor] : items.get(cursor);
             cursor++;
+            if (!isSnapshot) removable = true;
             return element;
         }
 
         /**
-         * Removes the element last returned by {@link #next()} from the live Bag.
+         * Removes the element last returned by {@code next()} from the live Bag.
          *
-         * <p><b>Optimization:</b> Uses {@link ArrayList#remove(int)} (index-based)
-         * rather than {@link ArrayList#remove(Object)} (value-based). The index
-         * variant skips the O(n) equality scan entirely — it jumps straight to
-         * the known position and shifts elements left. This is always at least as
-         * fast, and for large lists with many duplicates it can be significantly
-         * faster.</p>
+         * <p>Uses {@link ArrayList#remove(int)} (index-based, no equality scan),
+         * then increments both the Bag's {@code modCount} and this iterator's
+         * {@code expectedModCount} so that the iterator's own removal is not
+         * flagged as a concurrent modification on the next call.</p>
          *
-         * @throws UnsupportedOperationException if called on a snapshot iterator
-         * @throws IllegalStateException if {@link #next()} has not been called,
-         *         or if {@code remove()} was already called after the last {@code next()}
+         * @throws UnsupportedOperationException on a snapshot iterator
+         * @throws IllegalStateException if {@code next()} has not been called, or
+         *         {@code remove()} was already called after the last {@code next()}
+         * @throws ConcurrentModificationException if an external mutation occurred
          */
         @Override
         public void remove() {
-            if (isSnapshot) {
-                throw new UnsupportedOperationException(
-                        "Snapshot iterators are read-only; remove() is not supported.");
-            }
-            if (!removable) {
-                throw new IllegalStateException(
-                        "remove() must be called after next(), and only once per next() call.");
-            }
-            // Index-based remove: O(n) shift but NO equality scan
-            items.remove(cursor - 1);
+            if (isSnapshot) throw new UnsupportedOperationException(
+                    "Snapshot iterators are read-only; remove() is not supported.");
+            checkForComodification();
+            if (!removable) throw new IllegalStateException(
+                    "remove() must be called after next(), and only once per next() call.");
+
+            items.remove(cursor - 1);   // index-based: no equality scan
             cursor--;
-            removable = false;
+            removable        = false;
+            modCount++;                 // Bag structurally changed
+            expectedModCount = modCount; // iterator owns this change — don't throw
+        }
+
+        /**
+         * Overrides the default {@code forEachRemaining} to use a tight indexed
+         * loop for the remaining elements rather than repeated {@code next()} calls.
+         *
+         * <p>A single {@code modCount} check before the loop (rather than once
+         * per element) is sufficient here because the consumer is not allowed to
+         * mutate the Bag — if it does, the check at the end of the loop body
+         * detects it.  This keeps the hot path as lean as possible.</p>
+         */
+        @Override
+        @SuppressWarnings("unchecked")
+        public void forEachRemaining(Consumer<? super E> action) {
+            Objects.requireNonNull(action, "action must not be null");
+            checkForComodification();
+
+            if (isSnapshot) {
+                // Snapshot: tight indexed loop, no modCount overhead
+                while (cursor < snapshot.length) {
+                    action.accept((E) snapshot[cursor++]);
+                }
+            } else {
+                // Live: check modCount after every action, same as forEach()
+                final int size = items.size();
+                while (cursor < size) {
+                    action.accept(items.get(cursor++));
+                    if (modCount != expectedModCount) {
+                        throw new ConcurrentModificationException(
+                                "Bag was structurally modified during forEachRemaining "
+                                        + "at index " + (cursor - 1));
+                    }
+                }
+                removable = false;  // cursor is at end; remove() no longer valid
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // BagSpliterator — snapshot, ORDERED | SIZED | SUBSIZED | IMMUTABLE
+    // ---------------------------------------------------------------
+
+    /**
+     * Array-backed spliterator over a snapshot of the Bag's elements.
+     *
+     * <p>Characteristics: {@link Spliterator#ORDERED} | {@link Spliterator#SIZED}
+     * | {@link Spliterator#SUBSIZED} | {@link Spliterator#IMMUTABLE}.</p>
+     *
+     * <p>The snapshot is taken once by {@link Bag#spliterator()} via
+     * {@code items.toArray()}.  All splits share the same underlying array
+     * object; each split is simply a different {@code [lo, hi)} slice.
+     * This is O(1) per split — no copying on each {@code trySplit()} call.</p>
+     */
+    private class BagSpliterator implements Spliterator<E> {
+
+        private final Object[] data;  // shared snapshot array — never mutated
+        private int lo;               // inclusive start of this spliterator's range
+        private final int hi;         // exclusive end of this spliterator's range
+
+        BagSpliterator(Object[] data, int lo, int hi) {
+            this.data = data;
+            this.lo   = lo;
+            this.hi   = hi;
+        }
+
+        /**
+         * Attempts to split this spliterator into two roughly equal halves.
+         *
+         * <p>Returns {@code null} when the range is too small to split
+         * (fewer than 2 elements remaining).  Otherwise divides at the midpoint:
+         * the returned spliterator covers {@code [lo, mid)} and this spliterator
+         * advances to cover {@code [mid, hi)}.  Both halves know their exact size
+         * ({@code SUBSIZED}), enabling balanced fork/join work-stealing.</p>
+         *
+         * @return a new {@link BagSpliterator} covering the left half, or
+         *         {@code null} if the range cannot be split further
+         */
+        @Override
+        public BagSpliterator trySplit() {
+            int mid = (lo + hi) >>> 1;   // unsigned right-shift avoids overflow
+            if (mid == lo) return null;  // fewer than 2 elements — cannot split
+            BagSpliterator left = new BagSpliterator(data, lo, mid);
+            lo = mid;                    // this spliterator now covers [mid, hi)
+            return left;
+        }
+
+        /**
+         * If a remaining element exists, passes it to {@code action} and advances.
+         *
+         * @return {@code true} if an element was consumed; {@code false} if exhausted
+         */
+        @Override
+        @SuppressWarnings("unchecked")
+        public boolean tryAdvance(Consumer<? super E> action) {
+            Objects.requireNonNull(action, "action must not be null");
+            if (lo >= hi) return false;
+            action.accept((E) data[lo++]);
+            return true;
+        }
+
+        /**
+         * Feeds all remaining elements to {@code action} in a tight indexed loop.
+         *
+         * <p>Overriding the default (which calls {@code tryAdvance} repeatedly)
+         * removes the per-element {@code lo >= hi} branch check overhead.  The
+         * loop body is a single unchecked array read + consumer call — the
+         * smallest possible hot path.</p>
+         */
+        @Override
+        @SuppressWarnings("unchecked")
+        public void forEachRemaining(Consumer<? super E> action) {
+            Objects.requireNonNull(action, "action must not be null");
+            while (lo < hi) {
+                action.accept((E) data[lo++]);
+            }
+        }
+
+        /**
+         * Returns the exact number of elements remaining in this split.
+         *
+         * <p>Because the characteristic {@link Spliterator#SIZED} is advertised,
+         * this value is treated as exact by the Streams framework — it is used to
+         * pre-size output collections and to compute parallel task granularity.</p>
+         */
+        @Override
+        public long estimateSize() { return hi - lo; }
+
+        /**
+         * Returns the exact size (same as {@link #estimateSize()} because
+         * {@code SIZED} is set).
+         */
+        @Override
+        public long getExactSizeIfKnown() { return hi - lo; }
+
+        /**
+         * Reports the four characteristics that make this spliterator useful:
+         * {@code ORDERED | SIZED | SUBSIZED | IMMUTABLE}.
+         *
+         * <ul>
+         *   <li>{@code ORDERED}   — insertion order is the encounter order.</li>
+         *   <li>{@code SIZED}     — {@code estimateSize()} is exact.</li>
+         *   <li>{@code SUBSIZED}  — both halves of a split are also sized.</li>
+         *   <li>{@code IMMUTABLE} — the snapshot array is never written to after
+         *                           creation; no {@code ConcurrentModificationException}
+         *                           is possible.</li>
+         * </ul>
+         */
+        @Override
+        public int characteristics() {
+            return ORDERED | SIZED | SUBSIZED | IMMUTABLE;
         }
     }
 
@@ -562,21 +683,9 @@ public class Bag<E> implements Container<E> {
     // Standard Object overrides
     // ---------------------------------------------------------------
 
-    /**
-     * Returns a string of the form {@code Bag[e1, e2, ...]}.
-     */
     @Override
-    public String toString() {
-        return "Bag" + items.toString();
-    }
+    public String toString() { return "Bag" + items.toString(); }
 
-    /**
-     * Two Bags are equal when they contain the same elements in the same order.
-     *
-     * <p><b>Optimization:</b> Checks referential equality ({@code this == obj})
-     * before delegating to {@link ArrayList#equals}, short-circuiting the
-     * element-by-element comparison when both references point to the same object.</p>
-     */
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
@@ -585,7 +694,5 @@ public class Bag<E> implements Container<E> {
     }
 
     @Override
-    public int hashCode() {
-        return items.hashCode();
-    }
+    public int hashCode() { return items.hashCode(); }
 }
