@@ -1,0 +1,11 @@
+This project has been a very fun project to participate in and work on. Going through and creating the array and maniplulating it with the API we created has been a great learning experience for me
+and how to implement methods that work well and using the tests to create good code. I did try and create the methods myself before utilizing any AI just to test myeslf and was able to get the basic methods to run through but nothing
+close what Claude was able to generate, the code we see in my project is beyond my capabilities but has been very interesting to go through and try to understand what each method and class is doing
+that Claude has created for me. There are times when it may have provided too much for me so I would go back and try to have it simplify the code to make it less robust for what I was looking for.
+I will say using AI to assist me with this project definitely expedited my completion of this project while still being thorough and doing my best to understand the code being generated through Claude. 
+The smoke test that I created through the driver is an interesting one that was generated for me and I believe that provided a great visual aid for me when running it to see how the Array was being manipulated
+through the provided methods. Really broke down what each method was doing and how the iterator traversed through the Arraylist. I will say I will be practicing what I learned throughout this project on my own and
+will be creating an arraylist from scratch with minor AI to get a firm understanding of what the AI was doing especially creating my own tests. This showed me that I have a lot more practice and studying to do as always.
+But I feel like that will never end. Learning how to interact and use AI has been a great learning edxperience as well and how it responds to your prompts, I know I need to be more specific at times which 
+is something I have really learned in this class especially after using Claude which I ended up paying for which has been a great decision. I am not only using it in this class but for my own personal projects that 
+I am building for continued education outside of school. Overall, I feel like this project really helped me further understand the overall concept of this module. 

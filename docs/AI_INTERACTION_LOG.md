@@ -1,4 +1,4 @@
-AI Tool Used: [Co-Pilot, GPT-5 mini]
+AI Tool Used: [Claude, Sonnet 4.6]
 Generation Date: [3-26-26]
 Original Prompt:
 "[I have been given an interface called "Container"; this is the code for the container interface: public interface Container<E> extends Iterable<E> {
@@ -26,7 +26,7 @@ Manual Modifications:
 
 
 
-AI Tool Used: [Co-Pilot, GPT-5 mini]
+AI Tool Used: [Claude, Sonnet 4.6]
 Generation Date: [3-26-26]
 Original Prompt:
 "["Can we create a separate driver class that we can use as a smoke tests to test each one of the methods for the array?"]"
@@ -40,110 +40,29 @@ Manual Modifications:
 
 
 AI Tool Used: [Co-Pilot, GPT-5 mini]
-Generation Date: [2-18-26]
+Generation Date: [4-1-26]
 Original Prompt:
-"[""]"
+"["I would like to try and optimize the methods we have built in our Bag class. What can we add into the methods to improve what the methods do to the Arraylist?"]"
 Follow-up Prompts (if any):
 
-    "[N/A]"
 
-    "[N/A]"
 
 Manual Modifications:
 
-    [List any changes you made to the AI output]
-
-    [Explain why changes were necessary]
 
 
-
-AI Tool Used: [Co-Pilot, GPT-5 mini]
-Generation Date: [2-18-26]
+AI Tool Used: [Claude, Sonnet 4.6]
+Generation Date: [4-6-26]
 Original Prompt:
-"[""]"
+"["With the iterator I would like to implement forEach to process through the iterator and use spliterator over the elements to assist with further processing of the Array and fail-fast properties."]"
 Follow-up Prompts (if any):
 
-    "[N/A]"
-
-    "[N/A]"
 
 Manual Modifications:
 
-    [List any changes you made to the AI output]
-
-    [Explain why changes were necessary]
+    [Had to fix an error I was receiving when utilizing multipleIteratorsRemovesSave method, not sure what the source of the issue was but I had to make it a final method since the "it" was receiving an error which throws an array to be test. this was at line 173. THat seemed]
 
 
-
-AI Tool Used: [Co-Pilot, GPT-5 mini]
-Generation Date: [2-18-26]
-Original Prompt:
-"[""]"
-Follow-up Prompts (if any):
-
-    "[N/A]"
-
-    "[N/A]"
-
-Manual Modifications:
-
-    [List any changes you made to the AI output]
-
-    [Explain why changes were necessary]
-
-
-
-AI Tool Used: [Co-Pilot, GPT-5 mini]
-Generation Date: [2-18-26]
-Original Prompt:
-"[""]"
-Follow-up Prompts (if any):
-
-    "[N/A]"
-
-    "[N/A]"
-
-Manual Modifications:
-
-    [List any changes you made to the AI output]
-
-    [Explain why changes were necessary]
-
-
-
-AI Tool Used: [Co-Pilot, GPT-5 mini]
-Generation Date: [2-18-26]
-Original Prompt:
-"[""]"
-Follow-up Prompts (if any):
-
-    "[N/A]"
-
-    "[N/A]"
-
-Manual Modifications:
-
-    [List any changes you made to the AI output]
-
-    [Explain why changes were necessary]
-
-
-
-AI Tool Used: [Co-Pilot, GPT-5 mini]
-Generation Date: [2-18-26]
-Original Prompt:
-"[""]"
-Follow-up Prompts (if any):
-
-    "[N/A]"
-
-    "[N/A]"
-
-Manual Modifications:
-
-    [List any changes you made to the AI output]
-
-    [Explain why changes were necessary]
 
 
 
